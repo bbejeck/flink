@@ -397,9 +397,11 @@ public abstract class DataSet<T> {
 	}
 
 
-	public void print(Logger logger){
-		//this will print to the given logger.
-
+	public void print(Logger logger) throws Exception{
+		List<T> elements = collect();
+		for (T e: elements) {
+			logger.info(e);
+		}
 	}
 
 
