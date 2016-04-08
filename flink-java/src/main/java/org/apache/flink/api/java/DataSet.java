@@ -87,6 +87,7 @@ import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.core.fs.FileSystem.WriteMode;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.util.AbstractID;
+import org.apache.log4j.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -393,6 +394,12 @@ public abstract class DataSet<T> {
 
 		JobExecutionResult res = getExecutionEnvironment().execute();
 		return res.<Long> getAccumulatorResult(id);
+	}
+
+
+	public void print(Logger logger){
+		//this will print to the given logger.
+
 	}
 
 
