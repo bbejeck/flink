@@ -24,9 +24,9 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.cache.DistributedCache;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.StateChangelogOptionsInternal;
+import org.apache.flink.core.execution.JobStatusHook;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.blob.PermanentBlobKey;
-import org.apache.flink.runtime.executiongraph.JobStatusHook;
 import org.apache.flink.runtime.jobgraph.tasks.JobCheckpointingSettings;
 import org.apache.flink.runtime.jobmanager.scheduler.CoLocationGroup;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
@@ -70,6 +70,8 @@ public class JobGraph implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    private static final String INITIAL_CLIENT_HEARTBEAT_TIMEOUT = "initialClientHeartbeatTimeout";
+
     // --- job and configuration ---
 
     /** List of task vertices included in this job graph. */
@@ -86,6 +88,8 @@ public class JobGraph implements Serializable {
     private final String jobName;
 
     private JobType jobType = JobType.BATCH;
+
+    private boolean dynamic;
 
     /**
      * Whether approximate local recovery is enabled. This flag will be removed together with legacy
@@ -221,6 +225,14 @@ public class JobGraph implements Serializable {
 
     public JobType getJobType() {
         return jobType;
+    }
+
+    public void setDynamic(boolean dynamic) {
+        this.dynamic = dynamic;
+    }
+
+    public boolean isDynamic() {
+        return dynamic;
     }
 
     public void enableApproximateLocalRecovery(boolean enabled) {
@@ -367,9 +379,7 @@ public class JobGraph implements Serializable {
             return false;
         }
 
-        long checkpointInterval =
-                snapshotSettings.getCheckpointCoordinatorConfiguration().getCheckpointInterval();
-        return checkpointInterval > 0 && checkpointInterval < Long.MAX_VALUE;
+        return snapshotSettings.getCheckpointCoordinatorConfiguration().isCheckpointingEnabled();
     }
 
     /**
@@ -651,5 +661,13 @@ public class JobGraph implements Serializable {
 
     public List<JobStatusHook> getJobStatusHooks() {
         return this.jobStatusHooks;
+    }
+
+    public void setInitialClientHeartbeatTimeout(long initialClientHeartbeatTimeout) {
+        jobConfiguration.setLong(INITIAL_CLIENT_HEARTBEAT_TIMEOUT, initialClientHeartbeatTimeout);
+    }
+
+    public long getInitialClientHeartbeatTimeout() {
+        return jobConfiguration.getLong(INITIAL_CLIENT_HEARTBEAT_TIMEOUT, Long.MIN_VALUE);
     }
 }

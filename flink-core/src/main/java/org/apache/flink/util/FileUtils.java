@@ -628,7 +628,7 @@ public final class FileUtils {
      */
     public static boolean isJarFile(java.nio.file.Path file) {
         return JAR_FILE_EXTENSION.equals(
-                org.apache.flink.shaded.guava30.com.google.common.io.Files.getFileExtension(
+                org.apache.flink.shaded.guava31.com.google.common.io.Files.getFileExtension(
                         file.toString()));
     }
 
@@ -640,12 +640,35 @@ public final class FileUtils {
      */
     public static String stripFileExtension(String fileName) {
         final String extension =
-                org.apache.flink.shaded.guava30.com.google.common.io.Files.getFileExtension(
+                org.apache.flink.shaded.guava31.com.google.common.io.Files.getFileExtension(
                         fileName);
         if (!extension.isEmpty()) {
             return fileName.substring(0, fileName.lastIndexOf(extension) - 1);
         }
         return fileName;
+    }
+
+    /**
+     * Get a target path(the path that replaced symbolic links with linked path) if the original
+     * path contains symbolic path, return the original path otherwise.
+     *
+     * @param path the original path.
+     * @return the path that replaced symbolic links with real path.
+     */
+    public static java.nio.file.Path getTargetPathIfContainsSymbolicPath(java.nio.file.Path path)
+            throws IOException {
+        java.nio.file.Path targetPath = path;
+        java.nio.file.Path suffixPath = Paths.get("");
+        while (path != null && path.getFileName() != null) {
+            if (Files.isSymbolicLink(path)) {
+                java.nio.file.Path linkedPath = path.toRealPath();
+                targetPath = Paths.get(linkedPath.toString(), suffixPath.toString());
+                break;
+            }
+            suffixPath = Paths.get(path.getFileName().toString(), suffixPath.toString());
+            path = path.getParent();
+        }
+        return targetPath;
     }
 
     /**

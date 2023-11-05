@@ -17,11 +17,13 @@
  */
 package org.apache.flink.table.planner.utils
 
-import org.apache.flink.api.common.BatchShuffleMode
+import org.apache.flink.FlinkVersion
 import org.apache.flink.api.common.typeinfo.{AtomicType, TypeInformation}
 import org.apache.flink.api.java.typeutils.{PojoTypeInfo, RowTypeInfo, TupleTypeInfo}
 import org.apache.flink.api.scala.typeutils.CaseClassTypeInfo
-import org.apache.flink.configuration.ExecutionOptions
+import org.apache.flink.configuration.BatchExecutionOptions
+import org.apache.flink.core.testutils.FlinkMatchers.containsMessage
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParseException
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode
 import org.apache.flink.streaming.api.{environment, TimeCharacteristic}
 import org.apache.flink.streaming.api.datastream.DataStream
@@ -32,7 +34,7 @@ import org.apache.flink.table.api.bridge.java.{StreamTableEnvironment => JavaStr
 import org.apache.flink.table.api.bridge.scala.{StreamTableEnvironment => ScalaStreamTableEnv}
 import org.apache.flink.table.api.config.ExecutionConfigOptions
 import org.apache.flink.table.api.internal.{StatementSetImpl, TableEnvironmentImpl, TableEnvironmentInternal, TableImpl}
-import org.apache.flink.table.catalog.{CatalogManager, FunctionCatalog, GenericInMemoryCatalog, ObjectIdentifier}
+import org.apache.flink.table.catalog.{CatalogManager, CatalogStoreHolder, FunctionCatalog, GenericInMemoryCatalog, GenericInMemoryCatalogStore, ObjectIdentifier}
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.delegation.{Executor, ExecutorFactory}
 import org.apache.flink.table.descriptors.ConnectorDescriptorValidator.CONNECTOR_TYPE
@@ -48,8 +50,9 @@ import org.apache.flink.table.planner.delegation.PlannerBase
 import org.apache.flink.table.planner.functions.sql.FlinkSqlOperatorTable
 import org.apache.flink.table.planner.operations.{InternalDataStreamQueryOperation, PlannerQueryOperation, RichTableSourceQueryOperation}
 import org.apache.flink.table.planner.plan.nodes.calcite.LogicalWatermarkAssigner
-import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeContext
+import org.apache.flink.table.planner.plan.nodes.exec.{ExecNodeContext, ExecNodeGraph, ExecNodeGraphGenerator}
 import org.apache.flink.table.planner.plan.nodes.exec.utils.ExecNodePlanDumper
+import org.apache.flink.table.planner.plan.nodes.physical.FlinkPhysicalRel
 import org.apache.flink.table.planner.plan.optimize.program._
 import org.apache.flink.table.planner.plan.stats.FlinkStatistic
 import org.apache.flink.table.planner.plan.utils.FlinkRelOptUtil
@@ -76,7 +79,7 @@ import org.apache.calcite.avatica.util.TimeUnit
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.sql.{SqlExplainLevel, SqlIntervalQualifier}
 import org.apache.calcite.sql.parser.SqlParserPos
-import org.junit.Assert.{assertEquals, assertTrue, fail}
+import org.junit.Assert.{assertEquals, assertThat, assertTrue, fail}
 import org.junit.Rule
 import org.junit.rules.{ExpectedException, TemporaryFolder, TestName}
 
@@ -84,6 +87,7 @@ import java.io.{File, IOException}
 import java.net.URL
 import java.nio.file.{Files, Paths}
 import java.time.Duration
+import java.util.Collections
 
 /** Test base for testing Table API / SQL plans. */
 abstract class TableTestBase {
@@ -743,6 +747,21 @@ abstract class TableTestUtilBase(test: TableTestBase, isStreamingMode: Boolean) 
     doVerifyExplain(table.explain(extraDetails: _*), extraDetails: _*)
   }
 
+  /** Verify the expected exception for the given sql with the given message and exception class. */
+  def verifyExpectdException(
+      sql: String,
+      message: String,
+      clazz: Class[_ <: Throwable] = classOf[ValidationException]): Unit = {
+    try {
+      verifyExplain(sql)
+      fail(s"Expected a $clazz, but no exception is thrown.")
+    } catch {
+      case e: Throwable =>
+        assertTrue(clazz.isAssignableFrom(e.getClass))
+        assertThat(e, containsMessage(message))
+    }
+  }
+
   /**
    * Verify the explain result for the given [[Table]] with the given sink table name. See more
    * about [[StatementSet#explain()]].
@@ -790,8 +809,20 @@ abstract class TableTestUtilBase(test: TableTestBase, isStreamingMode: Boolean) 
   /** Verify the json plan for the given insert statement. */
   def verifyJsonPlan(insert: String): Unit = {
     ExecNodeContext.resetIdCounter()
-    val jsonPlan = getTableEnv.asInstanceOf[TableEnvironmentInternal].compilePlanSql(insert)
-    val jsonPlanWithoutFlinkVersion = TableTestUtil.replaceFlinkVersion(jsonPlan.asJsonString())
+    val jsonPlan = getTableEnv.compilePlanSql(insert).asJsonString()
+    doVerifyJsonPlan(jsonPlan)
+  }
+
+  /** Verify the json plan for the given [[StatementSet]]. */
+  def verifyJsonPlan(stmtSet: StatementSet): Unit = {
+    ExecNodeContext.resetIdCounter()
+    val jsonPlan = stmtSet.compilePlan().asJsonString()
+    doVerifyJsonPlan(jsonPlan)
+  }
+
+  /** Verify the serialized JSON of [[CompiledPlan]] for the given insert statement. */
+  def doVerifyJsonPlan(jsonPlan: String): Unit = {
+    val jsonPlanWithoutFlinkVersion = TableTestUtil.replaceFlinkVersion(jsonPlan)
     // add the postfix to the path to avoid conflicts
     // between the test class name and the result file name
     val clazz = test.getClass
@@ -811,8 +842,20 @@ abstract class TableTestUtilBase(test: TableTestBase, isStreamingMode: Boolean) 
     } else {
       val expected = String.join("\n", Files.readAllLines(path))
       assertEquals(
-        TableTestUtil.replaceExecNodeId(TableTestUtil.getFormattedJson(expected)),
-        TableTestUtil.replaceExecNodeId(TableTestUtil.getFormattedJson(jsonPlanWithoutFlinkVersion))
+        TableTestUtil.replaceExecNodeId(TableTestUtil.getPrettyJson(expected)),
+        TableTestUtil.replaceExecNodeId(TableTestUtil.getPrettyJson(jsonPlanWithoutFlinkVersion))
+      )
+      // check json serde round trip as well
+      val expectedWithFlinkVersion = JsonTestUtils.writeToString(
+        JsonTestUtils
+          .setFlinkVersion(JsonTestUtils.readFromString(expected), FlinkVersion.current()))
+      assertEquals(
+        TableTestUtil.replaceExecNodeId(TableTestUtil.getFormattedJson(expectedWithFlinkVersion)),
+        TableTestUtil.replaceExecNodeId(
+          TableTestUtil.getFormattedJson(
+            getPlanner
+              .loadPlan(PlanReference.fromJsonString(expectedWithFlinkVersion))
+              .asJsonString()))
       )
     }
   }
@@ -1001,6 +1044,10 @@ abstract class TableTestUtilBase(test: TableTestBase, isStreamingMode: Boolean) 
     if (expectedPlans.contains(PlanKind.OPT_REL)) {
       assertEqualsOrExpand("optimized rel plan", optimizedRelPlan, expand = false)
     }
+    // check optimized rel plan with available advice
+    if (expectedPlans.contains(PlanKind.OPT_REL_WITH_ADVICE)) {
+      assertEqualsOrExpand("optimized rel plan with advice", optimizedRelPlan, expand = false)
+    }
     // check optimized exec plan
     if (expectedPlans.contains(PlanKind.OPT_EXEC)) {
       assertEqualsOrExpand("optimized exec plan", optimizedExecPlan, expand = false)
@@ -1034,18 +1081,28 @@ abstract class TableTestUtilBase(test: TableTestBase, isStreamingMode: Boolean) 
     }
     val withChangelogTraits = extraDetails.contains(ExplainDetail.CHANGELOG_MODE)
 
+    val withAdvice = extraDetails.contains(ExplainDetail.PLAN_ADVICE)
     val optimizedPlan = optimizedRels.head match {
       case _: RelNode =>
-        optimizedRels
-          .map {
-            rel =>
-              FlinkRelOptUtil.toString(
-                rel,
-                detailLevel = explainLevel,
-                withChangelogTraits = withChangelogTraits,
-                withRowType = withRowType)
-          }
-          .mkString("\n")
+        if (withAdvice) {
+          FlinkRelOptUtil.toString(
+            optimizedRels,
+            detailLevel = explainLevel,
+            withChangelogTraits = withChangelogTraits,
+            withAdvice = true)
+        } else {
+          optimizedRels
+            .map {
+              rel =>
+                FlinkRelOptUtil.toString(
+                  rel,
+                  detailLevel = explainLevel,
+                  withChangelogTraits = withChangelogTraits,
+                  withRowType = withRowType)
+            }
+            .mkString("\n")
+        }
+
       case o =>
         throw new TableException(
           "The expected optimized plan is RelNode plan, " +
@@ -1094,8 +1151,9 @@ abstract class TableTestUtil(
   protected val testingTableEnv: TestingTableEnvironment =
     TestingTableEnvironment.create(setting, catalogManager, tableConfig)
   val tableEnv: TableEnvironment = testingTableEnv
-  tableEnv.getConfig
-    .set(ExecutionOptions.BATCH_SHUFFLE_MODE, BatchShuffleMode.ALL_EXCHANGES_PIPELINED)
+  tableEnv.getConfig.set(
+    BatchExecutionOptions.ADAPTIVE_AUTO_PARALLELISM_ENABLED,
+    Boolean.box(false))
 
   private val env: StreamExecutionEnvironment = getPlanner.getExecEnv
 
@@ -1145,7 +1203,7 @@ abstract class TableTestUtil(
       tableSource: TableSource[_],
       statistic: FlinkStatistic): Table = {
     // TODO RichTableSourceQueryOperation should be deleted and use registerTableSourceInternal
-    //  method instead of registerTable method here after unique key in TableSchema is ready
+    //  method instead of createTemporaryView method here after unique key in TableSchema is ready
     //  and setting catalog statistic to TableSourceTable in DatabaseCalciteSchema is ready
     val identifier = ObjectIdentifier.of(
       testingTableEnv.getCurrentCatalog,
@@ -1153,7 +1211,7 @@ abstract class TableTestUtil(
       name)
     val operation = new RichTableSourceQueryOperation(identifier, tableSource, statistic)
     val table = testingTableEnv.createTable(operation)
-    testingTableEnv.registerTable(name, table)
+    testingTableEnv.createTemporaryView(name, table)
     testingTableEnv.from(name)
   }
 
@@ -1283,7 +1341,7 @@ case class StreamTableTestUtil(
       expr
     )
     val queryOperation = new PlannerQueryOperation(watermarkAssigner)
-    testingTableEnv.registerTable(tableName, testingTableEnv.createTable(queryOperation))
+    testingTableEnv.createTemporaryView(tableName, testingTableEnv.createTable(queryOperation))
   }
 
   def buildStreamProgram(firstProgramNameToRemove: String): Unit = {
@@ -1569,6 +1627,13 @@ object TestingTableEnvironment {
             new GenericInMemoryCatalog(
               settings.getBuiltInCatalogName,
               settings.getBuiltInDatabaseName))
+          .catalogStoreHolder(
+            CatalogStoreHolder
+              .newBuilder()
+              .catalogStore(new GenericInMemoryCatalogStore)
+              .config(tableConfig)
+              .classloader(userClassLoader)
+              .build())
           .build
     }
 
@@ -1607,6 +1672,9 @@ object PlanKind extends Enumeration {
   /** Optimized Rel Plan */
   val OPT_REL: Value = Value("OPT_REL")
 
+  /** Optimized Rel Plan with Available Advice */
+  val OPT_REL_WITH_ADVICE: Value = Value("OPT_REL_WITH_ADVICE")
+
   /** Optimized Execution Plan */
   val OPT_EXEC: Value = Value("OPT_EXEC")
 }
@@ -1636,6 +1704,15 @@ object TableTestUtil {
   def toRelNode(tEnv: TableEnvironment, modifyOperation: ModifyOperation): RelNode = {
     val planner = tEnv.asInstanceOf[TableEnvironmentImpl].getPlanner.asInstanceOf[PlannerBase]
     planner.translateToRel(modifyOperation)
+  }
+
+  /** Convert a sql query to a ExecNodeGraph. */
+  def toExecNodeGraph(tEnv: TableEnvironment, sqlQuery: String): ExecNodeGraph = {
+    val planner = tEnv.asInstanceOf[TableEnvironmentImpl].getPlanner.asInstanceOf[PlannerBase]
+    val optimizedRel =
+      planner.optimize(toRelNode(tEnv.sqlQuery(sqlQuery))).asInstanceOf[FlinkPhysicalRel]
+    val generator = new ExecNodeGraphGenerator
+    generator.generate(Collections.singletonList(optimizedRel), false)
   }
 
   def createTemporaryView[T](
@@ -1678,7 +1755,8 @@ object TableTestUtil {
       statistic.getOrElse(FlinkStatistic.UNKNOWN)
     )
     val table = tEnv.asInstanceOf[TableEnvironmentImpl].createTable(dataStreamQueryOperation)
-    tEnv.registerTable(name, table)
+    // the table name is UUID generated which should be quoted to parse safely
+    tEnv.createTemporaryView(s"`$name`", table)
   }
 
   def readFromResource(path: String): String = {
@@ -1721,6 +1799,19 @@ object TableTestUtil {
     jsonNode.toPrettyString
   }
 
+  @throws[IOException]
+  def isValidJson(json: String): Boolean = {
+    try {
+      val parser = objectMapper.getFactory.createParser(json)
+      while (parser.nextToken() != null) {
+        // Do nothing, just parse the JSON string
+      }
+      true
+    } catch {
+      case _: JsonParseException => false
+    }
+  }
+
   /**
    * Stage {id} is ignored, because id keeps incrementing in test class while
    * StreamExecutionEnvironment is up
@@ -1752,6 +1843,8 @@ object TableTestUtil {
   /** Ignore exec node in operator name and description. */
   def replaceNodeIdInOperator(s: String): String = {
     s.replaceAll("\"contents\"\\s*:\\s*\"\\[\\d+\\]:", "\"contents\" : \"[]:")
+      // for sink v2.
+      .replaceAll("\"contents\"\\s*:\\s*\"(\\w+)\\[\\d+\\]:", "\"contents\" : \"$1[]:")
       .replaceAll("(\"type\"\\s*:\\s*\".*?)\\[\\d+\\]", "$1[]")
   }
 }

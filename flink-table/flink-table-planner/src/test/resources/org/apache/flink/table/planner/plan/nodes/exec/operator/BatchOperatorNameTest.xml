@@ -196,7 +196,8 @@ Calc(select=[EXPR$0 AS s])
 LogicalProject(b=[$0], window_end=[TUMBLE_END($1)], EXPR$2=[$2])
 +- LogicalAggregate(group=[{0, 1}], EXPR$2=[COUNT()])
    +- LogicalProject(b=[$1], $f1=[$TUMBLE($4, 900000:INTERVAL MINUTE)])
-      +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
+      +- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+         +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
@@ -263,7 +264,8 @@ Calc(select=[b, w$end AS window_end, EXPR$2])
 LogicalProject(b=[$0], window_end=[TUMBLE_END($1)], EXPR$2=[$2])
 +- LogicalAggregate(group=[{0, 1}], EXPR$2=[COUNT()])
    +- LogicalProject(b=[$1], $f1=[$TUMBLE($4, 900000:INTERVAL MINUTE)])
-      +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
+      +- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+         +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
@@ -1239,15 +1241,15 @@ NestedLoopJoin(joinType=[InnerJoin], where=[(a = d0)], select=[a, b, c, d, a0, b
 {
   "nodes" : [ {
     "id" : ,
-    "type" : "Source: TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
-    "pact" : "Data Source",
-    "contents" : "TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
-    "parallelism" : 1
-  }, {
-    "id" : ,
     "type" : "Source: TableSourceScan(table=[[default_catalog, default_database, B]], fields=[a, b, c, d])",
     "pact" : "Data Source",
     "contents" : "TableSourceScan(table=[[default_catalog, default_database, B]], fields=[a, b, c, d])",
+    "parallelism" : 1
+  }, {
+    "id" : ,
+    "type" : "Source: TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
+    "pact" : "Data Source",
+    "contents" : "TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
     "parallelism" : 1
   }, {
     "id" : ,
@@ -1293,15 +1295,15 @@ NestedLoopJoin(joinType=[InnerJoin], where=[(a = d0)], select=[a, b, c, d, a0, b
 {
   "nodes" : [ {
     "id" : ,
-    "type" : "Source: A[]",
-    "pact" : "Data Source",
-    "contents" : "[]:TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
-    "parallelism" : 1
-  }, {
-    "id" : ,
     "type" : "Source: B[]",
     "pact" : "Data Source",
     "contents" : "[]:TableSourceScan(table=[[default_catalog, default_database, B]], fields=[a, b, c, d])",
+    "parallelism" : 1
+  }, {
+    "id" : ,
+    "type" : "Source: A[]",
+    "pact" : "Data Source",
+    "contents" : "[]:TableSourceScan(table=[[default_catalog, default_database, A]], fields=[a, b, c, d])",
     "parallelism" : 1
   }, {
     "id" : ,
@@ -1326,7 +1328,8 @@ NestedLoopJoin(joinType=[InnerJoin], where=[(a = d0)], select=[a, b, c, d, a0, b
     <Resource name="explain">
       <![CDATA[== Abstract Syntax Tree ==
 LogicalProject(b=[$1], cnt1=[COUNT($0) OVER (PARTITION BY $1 ORDER BY $4 NULLS FIRST ROWS 2 PRECEDING)])
-+- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
++- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+   +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w0$o0 AS $1])
@@ -1338,9 +1341,10 @@ Calc(select=[b, w0$o0 AS $1])
 == Optimized Execution Plan ==
 Calc(select=[b, w0$o0 AS $1])
 +- OverAggregate(partitionBy=[b], orderBy=[rowtime ASC], window#0=[COUNT(a) AS w0$o0 ROWS BETWEEN 2 PRECEDING AND CURRENT ROW], select=[a, b, rowtime, w0$o0])
-   +- Sort(orderBy=[b ASC, rowtime ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b, rowtime], metadata=[]]], fields=[a, b, rowtime])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, rowtime ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b, rowtime], metadata=[]]], fields=[a, b, rowtime])
 
 == Physical Execution Plan ==
 {
@@ -1391,7 +1395,8 @@ Calc(select=[b, w0$o0 AS $1])
     <Resource name="explain">
       <![CDATA[== Abstract Syntax Tree ==
 LogicalProject(b=[$1], cnt1=[COUNT($0) OVER (PARTITION BY $1 ORDER BY $4 NULLS FIRST ROWS 2 PRECEDING)])
-+- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
++- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+   +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w0$o0 AS $1])
@@ -1403,9 +1408,10 @@ Calc(select=[b, w0$o0 AS $1])
 == Optimized Execution Plan ==
 Calc(select=[b, w0$o0 AS $1])
 +- OverAggregate(partitionBy=[b], orderBy=[rowtime ASC], window#0=[COUNT(a) AS w0$o0 ROWS BETWEEN 2 PRECEDING AND CURRENT ROW], select=[a, b, rowtime, w0$o0])
-   +- Sort(orderBy=[b ASC, rowtime ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b, rowtime], metadata=[]]], fields=[a, b, rowtime])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, rowtime ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b, rowtime], metadata=[]]], fields=[a, b, rowtime])
 
 == Physical Execution Plan ==
 {
@@ -1470,9 +1476,10 @@ Calc(select=[a, w0$o0], where=[<=(w0$o0, a)])
 == Optimized Execution Plan ==
 Calc(select=[a, w0$o0], where=[(w0$o0 <= a)])
 +- OverAggregate(partitionBy=[b], orderBy=[a ASC], window#0=[ROW_NUMBER(*) AS w0$o0 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], select=[a, b, w0$o0])
-   +- Sort(orderBy=[b ASC, a ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, a ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
 
 == Physical Execution Plan ==
 {
@@ -1537,9 +1544,10 @@ Calc(select=[a, w0$o0], where=[<=(w0$o0, a)])
 == Optimized Execution Plan ==
 Calc(select=[a, w0$o0], where=[(w0$o0 <= a)])
 +- OverAggregate(partitionBy=[b], orderBy=[a ASC], window#0=[ROW_NUMBER(*) AS w0$o0 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], select=[a, b, w0$o0])
-   +- Sort(orderBy=[b ASC, a ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, a ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
 
 == Physical Execution Plan ==
 {
@@ -1608,16 +1616,20 @@ SortAggregate(isMerge=[true], groupBy=[a], select=[a, Final_COUNT(count$0) AS b]
 
 == Optimized Execution Plan ==
 SortAggregate(isMerge=[true], groupBy=[a], select=[a, Final_COUNT(count$0) AS b])
-+- Sort(orderBy=[a ASC])
-   +- Exchange(distribution=[hash[a]])
-      +- LocalSortAggregate(groupBy=[a], select=[a, Partial_COUNT(b) AS count$0])
-         +- Sort(orderBy=[a ASC])
-            +- SortAggregate(isMerge=[true], groupBy=[a, b], select=[a, b])
-               +- Sort(orderBy=[a ASC, b ASC])
-                  +- Exchange(distribution=[hash[a, b]])
-                     +- LocalSortAggregate(groupBy=[a, b], select=[a, b])
++- Exchange(distribution=[forward])
+   +- Sort(orderBy=[a ASC])
+      +- Exchange(distribution=[hash[a]])
+         +- LocalSortAggregate(groupBy=[a], select=[a, Partial_COUNT(b) AS count$0])
+            +- Exchange(distribution=[forward])
+               +- Sort(orderBy=[a ASC])
+                  +- SortAggregate(isMerge=[true], groupBy=[a, b], select=[a, b])
+                     +- Exchange(distribution=[forward])
                         +- Sort(orderBy=[a ASC, b ASC])
-                           +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
+                           +- Exchange(distribution=[hash[a, b]])
+                              +- LocalSortAggregate(groupBy=[a, b], select=[a, b])
+                                 +- Exchange(distribution=[forward])
+                                    +- Sort(orderBy=[a ASC, b ASC])
+                                       +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
 
 == Physical Execution Plan ==
 {
@@ -1741,16 +1753,20 @@ SortAggregate(isMerge=[true], groupBy=[a], select=[a, Final_COUNT(count$0) AS b]
 
 == Optimized Execution Plan ==
 SortAggregate(isMerge=[true], groupBy=[a], select=[a, Final_COUNT(count$0) AS b])
-+- Sort(orderBy=[a ASC])
-   +- Exchange(distribution=[hash[a]])
-      +- LocalSortAggregate(groupBy=[a], select=[a, Partial_COUNT(b) AS count$0])
-         +- Sort(orderBy=[a ASC])
-            +- SortAggregate(isMerge=[true], groupBy=[a, b], select=[a, b])
-               +- Sort(orderBy=[a ASC, b ASC])
-                  +- Exchange(distribution=[hash[a, b]])
-                     +- LocalSortAggregate(groupBy=[a, b], select=[a, b])
++- Exchange(distribution=[forward])
+   +- Sort(orderBy=[a ASC])
+      +- Exchange(distribution=[hash[a]])
+         +- LocalSortAggregate(groupBy=[a], select=[a, Partial_COUNT(b) AS count$0])
+            +- Exchange(distribution=[forward])
+               +- Sort(orderBy=[a ASC])
+                  +- SortAggregate(isMerge=[true], groupBy=[a, b], select=[a, b])
+                     +- Exchange(distribution=[forward])
                         +- Sort(orderBy=[a ASC, b ASC])
-                           +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
+                           +- Exchange(distribution=[hash[a, b]])
+                              +- LocalSortAggregate(groupBy=[a, b], select=[a, b])
+                                 +- Exchange(distribution=[forward])
+                                    +- Sort(orderBy=[a ASC, b ASC])
+                                       +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[a, b], metadata=[]]], fields=[a, b])
 
 == Physical Execution Plan ==
 {
@@ -2020,7 +2036,8 @@ SortMergeJoin(joinType=[InnerJoin], where=[(a = d0)], select=[a, b, c, d, a0, b0
 LogicalProject(b=[$0], window_end=[TUMBLE_END($1)], EXPR$2=[$2])
 +- LogicalAggregate(group=[{0, 1}], EXPR$2=[FIRST_VALUE($2)])
    +- LogicalProject(b=[$1], $f1=[$TUMBLE($4, 900000:INTERVAL MINUTE)], a=[$0])
-      +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
+      +- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+         +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
@@ -2032,9 +2049,10 @@ Calc(select=[b, w$end AS window_end, EXPR$2])
 == Optimized Execution Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
 +- SortWindowAggregate(groupBy=[b], window=[TumblingGroupWindow('w$, rowtime, 900000)], properties=[w$start, w$end, w$rowtime], select=[b, FIRST_VALUE(a) AS EXPR$2])
-   +- Sort(orderBy=[b ASC, rowtime ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[b, rowtime, a], metadata=[]]], fields=[b, rowtime, a])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, rowtime ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[b, rowtime, a], metadata=[]]], fields=[b, rowtime, a])
 
 == Physical Execution Plan ==
 {
@@ -2143,7 +2161,8 @@ SortMergeJoin(joinType=[InnerJoin], where=[(a = d0)], select=[a, b, c, d, a0, b0
 LogicalProject(b=[$0], window_end=[TUMBLE_END($1)], EXPR$2=[$2])
 +- LogicalAggregate(group=[{0, 1}], EXPR$2=[FIRST_VALUE($2)])
    +- LogicalProject(b=[$1], $f1=[$TUMBLE($4, 900000:INTERVAL MINUTE)], a=[$0])
-      +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
+      +- LogicalProject(a=[$0], b=[$1], c=[$2], d=[$3], rowtime=[$4], proctime=[PROCTIME()])
+         +- LogicalTableScan(table=[[default_catalog, default_database, MyTable]])
 
 == Optimized Physical Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
@@ -2155,9 +2174,10 @@ Calc(select=[b, w$end AS window_end, EXPR$2])
 == Optimized Execution Plan ==
 Calc(select=[b, w$end AS window_end, EXPR$2])
 +- SortWindowAggregate(groupBy=[b], window=[TumblingGroupWindow('w$, rowtime, 900000)], properties=[w$start, w$end, w$rowtime], select=[b, FIRST_VALUE(a) AS EXPR$2])
-   +- Sort(orderBy=[b ASC, rowtime ASC])
-      +- Exchange(distribution=[hash[b]])
-         +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[b, rowtime, a], metadata=[]]], fields=[b, rowtime, a])
+   +- Exchange(distribution=[forward])
+      +- Sort(orderBy=[b ASC, rowtime ASC])
+         +- Exchange(distribution=[hash[b]])
+            +- TableSourceScan(table=[[default_catalog, default_database, MyTable, project=[b, rowtime, a], metadata=[]]], fields=[b, rowtime, a])
 
 == Physical Execution Plan ==
 {

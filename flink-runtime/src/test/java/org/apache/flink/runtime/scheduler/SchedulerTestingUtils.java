@@ -20,6 +20,7 @@ package org.apache.flink.runtime.scheduler;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.JobException;
 import org.apache.flink.runtime.blob.BlobWriter;
 import org.apache.flink.runtime.checkpoint.CheckpointCoordinator;
@@ -35,11 +36,14 @@ import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.ExecutionGraph;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
+import org.apache.flink.runtime.executiongraph.IOMetrics;
+import org.apache.flink.runtime.executiongraph.ResultPartitionBytes;
 import org.apache.flink.runtime.executiongraph.failover.flip1.TestRestartBackoffTimeStrategy;
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.jobgraph.DistributionPattern;
 import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
+import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobGraphBuilder;
 import org.apache.flink.runtime.jobgraph.JobVertex;
@@ -50,6 +54,7 @@ import org.apache.flink.runtime.jobmaster.LogicalSlot;
 import org.apache.flink.runtime.jobmaster.TestingLogicalSlotBuilder;
 import org.apache.flink.runtime.jobmaster.slotpool.PhysicalSlotProvider;
 import org.apache.flink.runtime.messages.checkpoint.AcknowledgeCheckpoint;
+import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.scheduler.strategy.ExecutionVertexID;
 import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.StateBackend;
@@ -64,6 +69,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -102,18 +108,35 @@ public class SchedulerTestingUtils {
             final JobGraph jobGraph,
             @Nullable StateBackend stateBackend,
             @Nullable CheckpointStorage checkpointStorage) {
+        enableCheckpointing(
+                jobGraph,
+                stateBackend,
+                checkpointStorage,
+                Long.MAX_VALUE, // disable periodical checkpointing
+                false);
+    }
+
+    public static void enableCheckpointing(
+            final JobGraph jobGraph,
+            @Nullable StateBackend stateBackend,
+            @Nullable CheckpointStorage checkpointStorage,
+            long checkpointInterval,
+            boolean enableCheckpointsAfterTasksFinish) {
 
         final CheckpointCoordinatorConfiguration config =
-                new CheckpointCoordinatorConfiguration(
-                        Long.MAX_VALUE, // disable periodical checkpointing
-                        DEFAULT_CHECKPOINT_TIMEOUT_MS,
-                        0,
-                        1,
-                        CheckpointRetentionPolicy.NEVER_RETAIN_AFTER_TERMINATION,
-                        false,
-                        false,
-                        0,
-                        0);
+                new CheckpointCoordinatorConfiguration.CheckpointCoordinatorConfigurationBuilder()
+                        .setCheckpointInterval(checkpointInterval)
+                        .setCheckpointTimeout(DEFAULT_CHECKPOINT_TIMEOUT_MS)
+                        .setMinPauseBetweenCheckpoints(0)
+                        .setMaxConcurrentCheckpoints(1)
+                        .setCheckpointRetentionPolicy(
+                                CheckpointRetentionPolicy.NEVER_RETAIN_AFTER_TERMINATION)
+                        .setExactlyOnce(false)
+                        .setUnalignedCheckpointsEnabled(false)
+                        .setTolerableCheckpointFailureNumber(0)
+                        .setCheckpointIdOfIgnoredInFlightData(0)
+                        .setEnableCheckpointsAfterTasksFinish(enableCheckpointsAfterTasksFinish)
+                        .build();
 
         SerializedValue<StateBackend> serializedStateBackend = null;
         if (stateBackend != null) {
@@ -252,7 +275,7 @@ public class SchedulerTestingUtils {
                                 scheduler.acknowledgeCheckpoint(
                                         pc.getJobId(),
                                         attemptId,
-                                        pc.getCheckpointId(),
+                                        pc.getCheckpointID(),
                                         new CheckpointMetrics(),
                                         null));
     }
@@ -269,7 +292,7 @@ public class SchedulerTestingUtils {
                 checkpointCoordinator.getPendingCheckpoints().values().iterator().next();
         final CompletableFuture<CompletedCheckpoint> future = checkpoint.getCompletionFuture();
 
-        acknowledgePendingCheckpoint(scheduler, checkpoint.getCheckpointId());
+        acknowledgePendingCheckpoint(scheduler, checkpoint.getCheckpointID());
 
         CompletedCheckpoint completed = future.getNow(null);
         assertNotNull("checkpoint not complete", completed);
@@ -328,7 +351,8 @@ public class SchedulerTestingUtils {
             ComponentMainThreadExecutor mainThreadExecutor,
             ScheduledExecutorService ioExecutor,
             JobMasterPartitionTracker partitionTracker,
-            ScheduledExecutorService scheduledExecutor)
+            ScheduledExecutorService scheduledExecutor,
+            Configuration jobMasterConfiguration)
             throws Exception {
         final List<JobVertex> vertices = new ArrayList<>(Collections.singletonList(producer));
         IntermediateDataSetID dataSetId = new IntermediateDataSetID();
@@ -347,7 +371,8 @@ public class SchedulerTestingUtils {
                         mainThreadExecutor,
                         ioExecutor,
                         partitionTracker,
-                        scheduledExecutor);
+                        scheduledExecutor,
+                        jobMasterConfiguration);
         final ExecutionGraph executionGraph = scheduler.getExecutionGraph();
         final TestingLogicalSlotBuilder slotBuilder = new TestingLogicalSlotBuilder();
 
@@ -382,7 +407,9 @@ public class SchedulerTestingUtils {
             JobVertexID jobVertex, ExecutionGraph executionGraph) {
         try {
             executionGraph.initializeJobVertex(
-                    executionGraph.getJobVertex(jobVertex), System.currentTimeMillis());
+                    executionGraph.getJobVertex(jobVertex),
+                    System.currentTimeMillis(),
+                    UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
             executionGraph.notifyNewlyInitializedJobVertices(
                     Collections.singletonList(executionGraph.getJobVertex(jobVertex)));
         } catch (JobException exception) {
@@ -398,7 +425,8 @@ public class SchedulerTestingUtils {
             ComponentMainThreadExecutor mainThreadExecutor,
             ScheduledExecutorService ioExecutor,
             JobMasterPartitionTracker partitionTracker,
-            ScheduledExecutorService scheduledExecutor)
+            ScheduledExecutorService scheduledExecutor,
+            Configuration jobMasterConfiguration)
             throws Exception {
         final JobGraph jobGraph =
                 JobGraphBuilder.newBatchJobGraphBuilder()
@@ -411,7 +439,8 @@ public class SchedulerTestingUtils {
                         .setRestartBackoffTimeStrategy(new TestRestartBackoffTimeStrategy(true, 0))
                         .setBlobWriter(blobWriter)
                         .setIoExecutor(ioExecutor)
-                        .setPartitionTracker(partitionTracker);
+                        .setPartitionTracker(partitionTracker)
+                        .setJobMasterConfiguration(jobMasterConfiguration);
         return isAdaptive ? builder.buildAdaptiveBatchJobScheduler() : builder.build();
     }
 
@@ -433,5 +462,35 @@ public class SchedulerTestingUtils {
             vertex.tryAssignResource(slot);
             vertex.deploy();
         }
+    }
+
+    public static TaskExecutionState createFinishedTaskExecutionState(
+            ExecutionAttemptID attemptId,
+            Map<IntermediateResultPartitionID, ResultPartitionBytes> resultPartitionBytes) {
+        return new TaskExecutionState(
+                attemptId,
+                ExecutionState.FINISHED,
+                null,
+                null,
+                new IOMetrics(0, 0, 0, 0, 0, 0, 0, resultPartitionBytes));
+    }
+
+    public static TaskExecutionState createFinishedTaskExecutionState(
+            ExecutionAttemptID attemptId) {
+        return createFinishedTaskExecutionState(attemptId, Collections.emptyMap());
+    }
+
+    public static TaskExecutionState createFailedTaskExecutionState(
+            ExecutionAttemptID attemptId, Throwable failureCause) {
+        return new TaskExecutionState(attemptId, ExecutionState.FAILED, failureCause);
+    }
+
+    public static TaskExecutionState createFailedTaskExecutionState(ExecutionAttemptID attemptId) {
+        return createFailedTaskExecutionState(attemptId, new Exception("Expected failure cause"));
+    }
+
+    public static TaskExecutionState createCanceledTaskExecutionState(
+            ExecutionAttemptID attemptId) {
+        return new TaskExecutionState(attemptId, ExecutionState.CANCELED);
     }
 }

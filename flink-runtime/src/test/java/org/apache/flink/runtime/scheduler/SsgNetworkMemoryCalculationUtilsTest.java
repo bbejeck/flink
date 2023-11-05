@@ -34,6 +34,7 @@ import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
+import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.scheduler.adaptivebatch.AdaptiveBatchScheduler;
 import org.apache.flink.runtime.shuffle.PartitionDescriptor;
 import org.apache.flink.runtime.shuffle.ProducerDescriptor;
@@ -48,6 +49,7 @@ import org.junit.ClassRule;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -95,7 +97,7 @@ public class SsgNetworkMemoryCalculationUtilsTest {
                 new MemorySize(
                         TestShuffleMaster.computeRequiredShuffleMemoryBytes(0, 2)
                                 + TestShuffleMaster.computeRequiredShuffleMemoryBytes(1, 6)),
-                new MemorySize(TestShuffleMaster.computeRequiredShuffleMemoryBytes(10, 0)));
+                new MemorySize(TestShuffleMaster.computeRequiredShuffleMemoryBytes(5, 0)));
     }
 
     private void testGenerateEnrichedResourceProfile(
@@ -151,15 +153,18 @@ public class SsgNetworkMemoryCalculationUtilsTest {
         ExecutionJobVertex map = jobVertices.next();
         ExecutionJobVertex sink = jobVertices.next();
 
-        executionGraph.initializeJobVertex(source, 0L);
+        executionGraph.initializeJobVertex(
+                source, 0L, UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
         triggerComputeNumOfSubpartitions(source.getProducedDataSets()[0]);
 
         map.setParallelism(5);
-        executionGraph.initializeJobVertex(map, 0L);
+        executionGraph.initializeJobVertex(
+                map, 0L, UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
         triggerComputeNumOfSubpartitions(map.getProducedDataSets()[0]);
 
         sink.setParallelism(7);
-        executionGraph.initializeJobVertex(sink, 0L);
+        executionGraph.initializeJobVertex(
+                sink, 0L, UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
 
         assertNetworkMemory(
                 slotSharingGroups,
@@ -167,7 +172,7 @@ public class SsgNetworkMemoryCalculationUtilsTest {
                         new MemorySize(TestShuffleMaster.computeRequiredShuffleMemoryBytes(0, 5)),
                         new MemorySize(TestShuffleMaster.computeRequiredShuffleMemoryBytes(5, 20)),
                         new MemorySize(
-                                TestShuffleMaster.computeRequiredShuffleMemoryBytes(30, 0))));
+                                TestShuffleMaster.computeRequiredShuffleMemoryBytes(15, 0))));
     }
 
     private void triggerComputeNumOfSubpartitions(IntermediateResult result) {
@@ -224,18 +229,28 @@ public class SsgNetworkMemoryCalculationUtilsTest {
         final ExecutionJobVertex producer = vertexIterator.next();
         final ExecutionJobVertex consumer = vertexIterator.next();
 
-        eg.initializeJobVertex(producer, 0L);
+        eg.initializeJobVertex(
+                producer,
+                0L,
+                UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
         final IntermediateResult result = producer.getProducedDataSets()[0];
         triggerComputeNumOfSubpartitions(result);
 
         consumer.setParallelism(decidedConsumerParallelism);
-        eg.initializeJobVertex(consumer, 0L);
+        eg.initializeJobVertex(
+                consumer,
+                0L,
+                UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
 
-        Map<IntermediateDataSetID, Integer> maxInputChannelNums =
-                SsgNetworkMemoryCalculationUtils.getMaxInputChannelNumsForDynamicGraph(consumer);
+        Map<IntermediateDataSetID, Integer> maxInputChannelNums = new HashMap<>();
+        Map<IntermediateDataSetID, ResultPartitionType> inputPartitionTypes = new HashMap<>();
+        SsgNetworkMemoryCalculationUtils.getMaxInputChannelInfoForDynamicGraph(
+                consumer, maxInputChannelNums, inputPartitionTypes);
 
         assertThat(maxInputChannelNums.size(), is(1));
         assertThat(maxInputChannelNums.get(result.getId()), is(expectedNumChannels));
+        assertThat(inputPartitionTypes.size(), is(1));
+        assertThat(inputPartitionTypes.get(result.getId()), is(result.getResultType()));
     }
 
     private DefaultExecutionGraph createDynamicExecutionGraph(

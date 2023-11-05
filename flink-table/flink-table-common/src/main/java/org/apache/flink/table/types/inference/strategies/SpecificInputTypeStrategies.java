@@ -50,10 +50,12 @@ public final class SpecificInputTypeStrategies {
     /** See {@link CastInputTypeStrategy}. */
     public static final InputTypeStrategy CAST = new CastInputTypeStrategy();
 
+    public static final InputTypeStrategy REINTERPRET_CAST = new ReinterpretCastInputTypeStrategy();
+
     /** See {@link MapInputTypeStrategy}. */
     public static final InputTypeStrategy MAP = new MapInputTypeStrategy();
 
-    /** See {@link CurrentWatermarkTypeStrategy}. */
+    /** See {@link CurrentWatermarkInputTypeStrategy}. */
     public static final InputTypeStrategy CURRENT_WATERMARK =
             new CurrentWatermarkInputTypeStrategy();
 

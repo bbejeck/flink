@@ -19,8 +19,6 @@ package org.apache.flink.table.planner.plan.batch.sql.join
 
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api._
-import org.apache.flink.table.api.{TableException, ValidationException}
-import org.apache.flink.table.api.bridge.scala._
 import org.apache.flink.table.planner.utils.{BatchTableTestUtil, TableTestBase}
 
 import org.junit.Test
@@ -34,6 +32,32 @@ abstract class JoinTestBase extends TableTestBase {
   @Test(expected = classOf[ValidationException])
   def testJoinNonExistingKey(): Unit = {
     util.verifyExecPlan("SELECT c, g FROM MyTable1, MyTable2 WHERE foo = e")
+  }
+
+  @Test
+  def testLeftOuterJoinWithFilter2(): Unit = {
+    // For left/right join, we will only push equal filter condition into
+    // other side by derived from join condition and filter condition. So,
+    // d IS NULL cannot be push into left side.
+    util.verifyExecPlan(
+      "SELECT d, e, f FROM MyTable1 LEFT JOIN MyTable2 ON a = d where d IS NULL AND a < 12")
+  }
+
+  @Test
+  def testLeftOuterJoinWithFilter3(): Unit = {
+    // For left/right join, we will only push equal filter condition into
+    // other side by derived from join condition and filter condition. So,
+    // d < 10 cannot be push into left side.
+    util.verifyExecPlan(
+      "SELECT d, e, f FROM MyTable1 LEFT JOIN MyTable2 ON a = d where d < 10 AND a < 12")
+  }
+
+  @Test
+  def testLeftOuterJoinWithFilter4(): Unit = {
+    // For left/right join, we will only push equal filter condition into
+    // other side by derived from join condition and filter condition. So,
+    // d = null cannot be push into left side.
+    util.verifyExecPlan("SELECT d, e, f FROM MyTable1 LEFT JOIN MyTable2 ON a = d where d = null")
   }
 
   @Test(expected = classOf[TableException])
@@ -275,5 +299,36 @@ abstract class JoinTestBase extends TableTestBase {
                           |   (select d, count(e) as e from MyTable2 group by d)
                           |   on a = d and b = e and d = 2 and b = 1
                           |""".stripMargin)
+  }
+
+  @Test
+  def testJoinPartitionTableWithNonExistentPartition(): Unit = {
+    util.tableEnv.executeSql("""
+                               |create table leftPartitionTable (
+                               | a1 varchar,
+                               | b1 int)
+                               | partitioned by (b1) 
+                               | with (
+                               | 'connector' = 'values',
+                               | 'bounded' = 'true',
+                               | 'partition-list' = 'b1:1'
+                               |)
+                               |""".stripMargin)
+    util.tableEnv.executeSql("""
+                               |create table rightPartitionTable (
+                               | a2 varchar,
+                               | b2 int)
+                               | partitioned by (b2) 
+                               | with (
+                               | 'connector' = 'values',
+                               | 'bounded' = 'true',
+                               | 'partition-list' = 'b2:2'
+                               |)
+                               |""".stripMargin)
+    // partition 'b2 = 3' not exists.
+    util.verifyExecPlan(
+      """
+        |SELECT * FROM leftPartitionTable, rightPartitionTable WHERE b1 = 1 AND b2 = 3 AND a1 = a2
+        |""".stripMargin)
   }
 }

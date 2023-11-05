@@ -62,7 +62,7 @@ import org.apache.flink.testutils.executor.TestExecutorResource;
 import org.apache.flink.util.CloseableIterator;
 import org.apache.flink.util.ExceptionUtils;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Lists;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Lists;
 
 import org.junit.Assert;
 import org.junit.ClassRule;
@@ -100,6 +100,7 @@ import static org.apache.flink.runtime.io.network.partition.InputChannelTestUtil
 import static org.apache.flink.runtime.io.network.util.TestBufferFactory.createBuffer;
 import static org.apache.flink.runtime.state.CheckpointStorageLocationReference.getDefault;
 import static org.apache.flink.util.Preconditions.checkNotNull;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasProperty;
@@ -355,9 +356,10 @@ public class RemoteInputChannelTest {
     }
 
     @Test
-    public void testPartitionRequestExponentialBackoff() throws Exception {
-        // Start with initial backoff, then keep doubling, and cap at max.
-        int[] expectedDelays = {500, 1000, 2000, 3000};
+    public void testPartitionRequestLinearBackoff() throws Exception {
+        // Start with initial backoff, then keep adding the partition request timeout, and cap at
+        // max.
+        int[] expectedDelays = {500, 1000, 1500, 2000};
 
         // Setup
         SingleInputGate inputGate = createSingleInputGate(1);
@@ -365,17 +367,16 @@ public class RemoteInputChannelTest {
         TestVerifyPartitionRequestClient client = new TestVerifyPartitionRequestClient();
         ConnectionManager connectionManager = new TestVerifyConnectionManager(client);
         RemoteInputChannel ch =
-                createRemoteInputChannel(inputGate, connectionManager, partitionId, 500, 3000);
+                createRemoteInputChannel(inputGate, connectionManager, partitionId, 500, 1000);
 
         // Initial request
         ch.requestSubpartition();
         client.verifyResult(partitionId, 0, 0);
 
-        // Request subpartition and verify that the actual requests are delayed.
+        // Request subpartition and verify that the actual back off.
         for (int expected : expectedDelays) {
             ch.retriggerSubpartitionRequest();
-
-            client.verifyResult(partitionId, 0, expected);
+            assertEquals(expected, ch.getCurrentBackoff());
         }
 
         // Exception after backoff is greater than the maximum backoff.
@@ -401,9 +402,9 @@ public class RemoteInputChannelTest {
         ch.requestSubpartition();
         client.verifyResult(partitionId, 0, 0);
 
-        // Initial delay for second request
+        // The current backoff for second request
         ch.retriggerSubpartitionRequest();
-        client.verifyResult(partitionId, 0, 500);
+        assertEquals(500, ch.getCurrentBackoff());
 
         // Exception after backoff is greater than the maximum backoff.
         try {
@@ -1743,11 +1744,11 @@ public class RemoteInputChannelTest {
     private RemoteInputChannel createRemoteInputChannel(
             SingleInputGate inputGate,
             int consumedSubpartitionIndex,
-            int initialBackoff,
+            int partitionRequestTimeout,
             int maxBackoff) {
         return InputChannelBuilder.newBuilder()
                 .setConsumedSubpartitionIndex(consumedSubpartitionIndex)
-                .setInitialBackoff(initialBackoff)
+                .setPartitionRequestListenerTimeout(partitionRequestTimeout)
                 .setMaxBackoff(maxBackoff)
                 .buildRemoteChannel(inputGate);
     }
@@ -1756,10 +1757,10 @@ public class RemoteInputChannelTest {
             SingleInputGate inputGate,
             ConnectionManager connectionManager,
             ResultPartitionID partitionId,
-            int initialBackoff,
+            int partitionRequestTimeout,
             int maxBackoff) {
         return InputChannelBuilder.newBuilder()
-                .setInitialBackoff(initialBackoff)
+                .setPartitionRequestListenerTimeout(partitionRequestTimeout)
                 .setMaxBackoff(maxBackoff)
                 .setPartitionId(partitionId)
                 .setConnectionManager(connectionManager)
@@ -1938,6 +1939,16 @@ public class RemoteInputChannelTest {
         // already empty.
         remoteInputChannel.getNextBuffer();
         assertEquals(3, remoteInputChannel.getBuffersInUseCount());
+    }
+
+    @Test
+    public void testReleasedChannelNotifyRequiredSegmentId() throws Exception {
+        SingleInputGate inputGate = createSingleInputGate(1);
+        RemoteInputChannel remoteChannel = createRemoteInputChannel(inputGate);
+
+        remoteChannel.releaseAllResources();
+        assertThatThrownBy(() -> remoteChannel.notifyRequiredSegmentId(0))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     /**

@@ -127,8 +127,8 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
+|       default |
 +---------------+
 2 rows in set
 !ok
@@ -190,9 +190,9 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
 |           db2 |
+|       default |
 +---------------+
 3 rows in set
 !ok
@@ -212,8 +212,8 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
+|       default |
 +---------------+
 2 rows in set
 !ok
@@ -254,6 +254,16 @@ use `default`;
 
 drop database `default`;
 !output
+org.apache.flink.table.api.ValidationException: Cannot drop a database which is currently in use.
+!error
+
+drop catalog `mod`;
+!output
+org.apache.flink.table.catalog.exceptions.CatalogException: Cannot drop a catalog which is currently in use.
+!error
+
+use catalog `c1`;
+!output
 +--------+
 | result |
 +--------+
@@ -283,39 +293,71 @@ org.apache.flink.table.catalog.exceptions.CatalogException: A catalog with name 
 
 create table MyTable1 (a int, b string) with ('connector' = 'values');
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist.
-!error
++--------+
+| result |
++--------+
+|     OK |
++--------+
+1 row in set
+!ok
 
 create table MyTable2 (a int, b string) with ('connector' = 'values');
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist.
-!error
++--------+
+| result |
++--------+
+|     OK |
++--------+
+1 row in set
+!ok
 
 # hive catalog is case-insensitive
 show tables;
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist
-!error
++------------+
+| table name |
++------------+
+|   MyTable1 |
+|   MyTable2 |
++------------+
+2 rows in set
+!ok
 
 show views;
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist
-!error
+Empty set
+!ok
 
 create view MyView1 as select 1 + 1;
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist.
-!error
++--------+
+| result |
++--------+
+|     OK |
++--------+
+1 row in set
+!ok
 
 create view MyView2 as select 1 + 1;
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist.
-!error
++--------+
+| result |
++--------+
+|     OK |
++--------+
+1 row in set
+!ok
 
 show views;
 !output
-org.apache.flink.table.api.ValidationException: Catalog mod does not exist
-!error
++-----------+
+| view name |
++-----------+
+|   MyView1 |
+|   MyView2 |
++-----------+
+2 rows in set
+!ok
 
 # test create with full qualified name
 create table c1.db1.MyTable3 (a int, b string) with ('connector' = 'values');
@@ -458,12 +500,16 @@ show tables;
 +------------+
 | table name |
 +------------+
+|   MyTable1 |
+|   MyTable2 |
 |   MyTable5 |
 |   MyTable6 |
+|    MyView1 |
+|    MyView2 |
 |    MyView5 |
 |    MyView6 |
 +------------+
-4 rows in set
+8 rows in set
 !ok
 
 show views;
@@ -471,10 +517,12 @@ show views;
 +-----------+
 | view name |
 +-----------+
+|   MyView1 |
+|   MyView2 |
 |   MyView5 |
 |   MyView6 |
 +-----------+
-2 rows in set
+4 rows in set
 !ok
 
 drop table db1.MyTable3;
@@ -563,10 +611,14 @@ show tables;
 +------------+
 | table name |
 +------------+
+|   MyTable1 |
+|   MyTable2 |
 |   MyTable5 |
+|    MyView1 |
+|    MyView2 |
 |    MyView5 |
 +------------+
-2 rows in set
+6 rows in set
 !ok
 
 show views;
@@ -574,9 +626,11 @@ show views;
 +-----------+
 | view name |
 +-----------+
+|   MyView1 |
+|   MyView2 |
 |   MyView5 |
 +-----------+
-1 row in set
+3 rows in set
 !ok
 
 # ==========================================================================
@@ -598,11 +652,15 @@ show tables;
 +------------+
 | table name |
 +------------+
+|   MyTable1 |
+|   MyTable2 |
 |   MyTable5 |
 |   MyTable7 |
+|    MyView1 |
+|    MyView2 |
 |    MyView5 |
 +------------+
-3 rows in set
+7 rows in set
 !ok
 
 reset;
@@ -630,10 +688,14 @@ show tables;
 +------------+
 | table name |
 +------------+
+|   MyTable1 |
+|   MyTable2 |
 |   MyTable7 |
+|    MyView1 |
+|    MyView2 |
 |    MyView5 |
 +------------+
-2 rows in set
+6 rows in set
 !ok
 
 # ==========================================================================

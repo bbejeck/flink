@@ -38,11 +38,14 @@ Flink SQL supports the following SHOW statements for now:
 - SHOW TABLES
 - SHOW CREATE TABLE
 - SHOW COLUMNS
+- SHOW PARTITIONS
+- SHOW PROCEDURES
 - SHOW VIEWS
 - SHOW CREATE VIEW
 - SHOW FUNCTIONS
 - SHOW MODULES
 - SHOW JARS
+- SHOW JOBS
 
 ## Run a SHOW statement
 
@@ -539,7 +542,7 @@ Assumes that the `db1` database located in `catalog1` catalog has the following 
 * dim
 
 the current database in session has the following tables:
-* fights
+* items
 * orders
 
 - Shows all tables of the given database.
@@ -605,10 +608,50 @@ show tables;
 ## SHOW CREATE TABLE
 
 ```sql
-SHOW CREATE TABLE
+SHOW CREATE TABLE [[catalog_name.]db_name.]table_name
 ```
 
 Show create table statement for specified table.
+
+The output includes the table name, column names, data types, constraints, comments, and configurations.
+
+It is a very useful statement when you need to understand the structure, configuration and constraints of an existing table or to recreate the table in another database.
+
+Assumes that the table `orders` is created as follows:
+```sql
+CREATE TABLE orders (
+  order_id BIGINT NOT NULL comment 'this is the primary key, named ''order_id''.',
+  product VARCHAR(32),
+  amount INT,
+  ts TIMESTAMP(3) comment 'notice: watermark, named ''ts''.',
+  ptime AS PROCTIME() comment 'notice: computed column, named ''ptime''.',
+  WATERMARK FOR ts AS ts - INTERVAL '1' SECOND,
+  CONSTRAINT `PK_3599338` PRIMARY KEY (order_id) NOT ENFORCED
+) WITH (
+  'connector' = 'datagen'
+);
+```
+Shows the creation statement.
+```sql
+show create table orders;
++---------------------------------------------------------------------------------------------+
+|                                                                                      result |
++---------------------------------------------------------------------------------------------+
+| CREATE TABLE `default_catalog`.`default_database`.`orders` (
+  `order_id` BIGINT NOT NULL COMMENT 'this is the primary key, named ''order_id''.',
+  `product` VARCHAR(32),
+  `amount` INT,
+  `ts` TIMESTAMP(3) COMMENT 'notice: watermark, named ''ts''.',
+  `ptime` AS PROCTIME() COMMENT 'notice: computed column, named ''ptime''.',
+  WATERMARK FOR `ts` AS `ts` - INTERVAL '1' SECOND,
+  CONSTRAINT `PK_3599338` PRIMARY KEY (`order_id`) NOT ENFORCED
+) WITH (
+  'connector' = 'datagen'
+)
+ |
++---------------------------------------------------------------------------------------------+
+1 row in set
+```
 
 <span class="label label-danger">Attention</span> Currently `SHOW CREATE TABLE` only supports table that is created by Flink SQL DDL.
 
@@ -699,6 +742,83 @@ show columns from orders not like '%_r';
 4 rows in set
 ```
 
+## SHOW PARTITIONS
+
+```sql
+SHOW PARTITIONS [[catalog_name.]database.]<table_name> [ PARTITION <partition_spec>]
+
+<partition_spec>:
+  (key1=val1, key2=val2, ...)
+```
+
+Show all partitions of the partitioned table with the given table name and optional partition clause.
+
+**PARTITION**
+Show all the partitions which are under the provided <partition_spec> in the given table.
+
+### SHOW PARTITIONS EXAMPLES
+
+Assumes that the partitioned table `table1` in the `database1` database which is located in the `catalog1` catalog has the following partitions:
+
+```sql
++---------+-----------------------------+
+|      id |                        date |
++---------+-----------------------------+
+|    1001 |                  2020-01-01 |
+|    1002 |                  2020-01-01 |
+|    1002 |                  2020-01-02 |
++---------+-----------------------------+
+```
+
+- Shows all partitions of the given table.
+
+```sql
+show partitions table1;
+-- show partitions database1.table1;
+-- show partitions catalog1.database1.table1;
++---------+-----------------------------+
+|      id |                        date |
++---------+-----------------------------+
+|    1001 |                  2020-01-01 |
+|    1002 |                  2020-01-01 |
+|    1002 |                  2020-01-02 |
++---------+-----------------------------+
+3 rows in set
+```
+
+- Shows all partitions of the given table with the given partition spec.
+
+```sql
+show partitions table1 partition (id=1002);
+-- show partitions database1.table1 partition (id=1002);
+-- show partitions catalog1.database1.table1 partition (id=1002);
++---------+-----------------------------+
+|      id |                        date |
++---------+-----------------------------+
+|    1002 |                  2020-01-01 |
+|    1002 |                  2020-01-02 |
++---------+-----------------------------+
+2 rows in set
+```
+
+## SHOW PROCEDURES
+
+```sql
+SHOW PROCEDURES [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] (LIKE | ILIKE) <sql_like_pattern> ]	
+```
+
+Show all procedures for an optionally specified database. If no database is specified then the procedures are returned from the current database. Additionally, a `<sql_like_pattern>` can be used to filter the procedures.
+
+**LIKE**
+Show all procedures with a `LIKE` clause, whose name is similar to the `<sql_like_pattern>`.
+
+The syntax of the SQL pattern in the `LIKE` clause is the same as that of the `MySQL` dialect.
+* `%` matches any number of characters, even zero characters, and `\%` matches one `%` character.
+* `_` matches exactly one character, `\_` matches one `_` character.
+
+**ILIKE**
+The same behavior as `LIKE` but the SQL pattern is case-insensitive.
+
 ## SHOW VIEWS
 
 ```sql
@@ -718,13 +838,23 @@ Show create view statement for specified view.
 ## SHOW FUNCTIONS
 
 ```sql
-SHOW [USER] FUNCTIONS
+SHOW [USER] FUNCTIONS [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] (LIKE | ILIKE) <sql_like_pattern> ]	
 ```
 
-Show all functions including system functions and user-defined functions in the current catalog and current database.
+Show all functions including system functions and user-defined functions for an optionally specified database. If no database is specified then the functions are returned from the current database. Additionally, a `<sql_like_pattern>` can be used to filter the functions.
 
 **USER**
-Show only user-defined functions in the current catalog and current database.
+Show only user-defined functions for an optionally specified database. If no database is specified then the functions are returned from the current database. Additionally, a `<sql_like_pattern>` can be used to filter the functions.
+
+**LIKE**
+Show all functions with a `LIKE` clause, whose name is similar to the `<sql_like_pattern>`.
+
+The syntax of the SQL pattern in the `LIKE` clause is the same as that of the `MySQL` dialect.
+* `%` matches any number of characters, even zero characters, and `\%` matches one `%` character.
+* `_` matches exactly one character, `\_` matches one `_` character.
+
+**ILIKE**
+The same behavior as `LIKE` but the SQL pattern is case-insensitive.
 
 ## SHOW MODULES
 
@@ -745,6 +875,16 @@ SHOW JARS
 
 Show all added jars in the session classloader which are added by [`ADD JAR`]({{< ref "docs/dev/table/sql/jar" >}}#add-jar) statements.
 
-<span class="label label-danger">Attention</span> Currently `SHOW JARS` only works in the [SQL CLI]({{< ref "docs/dev/table/sqlClient" >}}).
+<span class="label label-danger">Attention</span> Currently `SHOW JARS` statements only work in the [SQL CLI]({{< ref "docs/dev/table/sqlClient" >}}) or [SQL Gateway]({{< ref "docs/dev/table/sql-gateway/overview" >}}).
+
+## SHOW JOBS
+
+```sql
+SHOW JOBS
+```
+
+Show the jobs in the Flink cluster.
+
+<span class="label label-danger">Attention</span> Currently `SHOW JOBS` statements only work in the [SQL CLI]({{< ref "docs/dev/table/sqlClient" >}}) or [SQL Gateway]({{< ref "docs/dev/table/sql-gateway/overview" >}}).
 
 {{< top >}}

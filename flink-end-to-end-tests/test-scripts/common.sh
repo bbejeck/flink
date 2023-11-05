@@ -114,22 +114,6 @@ function revert_flink_dir() {
     CURL_SSL_ARGS=""
 }
 
-function setup_flink_shaded_zookeeper() {
-  local version=$1
-  # if it is already in lib we don't have to do anything
-  if ! [ -e "${FLINK_DIR}"/lib/flink-shaded-zookeeper-${version}* ]; then
-    if ! [ -e "${FLINK_DIR}"/opt/flink-shaded-zookeeper-${version}* ]; then
-      echo "Could not find ZK ${version} in opt or lib."
-      exit 1
-    else
-      # contents of 'opt' must not be changed since it is not backed up in common.sh#backup_flink_dir
-      # it is fine to delete jars from 'lib' since it is backed up and will be restored after the test
-      rm "${FLINK_DIR}"/lib/flink-shaded-zookeeper-*
-      cp "${FLINK_DIR}"/opt/flink-shaded-zookeeper-${version}* "${FLINK_DIR}/lib"
-    fi
-  fi
-}
-
 function add_optional_lib() {
     local lib_name=$1
     cp "$FLINK_DIR/opt/flink-${lib_name}"*".jar" "$FLINK_DIR/lib"
@@ -183,36 +167,34 @@ function create_ha_config() {
     echo "localhost:8081" > ${FLINK_DIR}/conf/masters
 
     # then move on to create the flink-conf.yaml
-    sed 's/^    //g' > ${FLINK_DIR}/conf/flink-conf.yaml << EOL
     #==============================================================================
     # Common
     #==============================================================================
 
-    jobmanager.rpc.address: localhost
-    jobmanager.rpc.port: 6123
-    jobmanager.memory.process.size: 1024m
-    taskmanager.memory.process.size: 1024m
-    taskmanager.numberOfTaskSlots: ${TASK_SLOTS_PER_TM_HA}
+    set_config_key "jobmanager.rpc.address" "localhost"
+    set_config_key "jobmanager.rpc.port" "6123"
+    set_config_key "jobmanager.memory.process.size" "1024m"
+    set_config_key "taskmanager.memory.process.size" "1024m"
+    set_config_key "taskmanager.numberOfTaskSlots" "${TASK_SLOTS_PER_TM_HA}"
 
     #==============================================================================
     # High Availability
     #==============================================================================
 
-    high-availability.type: zookeeper
-    high-availability.zookeeper.storageDir: file://${TEST_DATA_DIR}/recovery/
-    high-availability.zookeeper.quorum: localhost:2181
-    high-availability.zookeeper.path.root: /flink
-    high-availability.cluster-id: /test_cluster_one
+    set_config_key "high-availability.type" "zookeeper"
+    set_config_key "high-availability.zookeeper.storageDir" "file://${TEST_DATA_DIR}/recovery/"
+    set_config_key "high-availability.zookeeper.quorum" "localhost:2181"
+    set_config_key "high-availability.zookeeper.path.root" "/flink"
+    set_config_key "high-availability.cluster-id" "/test_cluster_one"
 
     #==============================================================================
     # Web Frontend
     #==============================================================================
 
-    rest.port: 8081
+    set_config_key "rest.port" "8081"
 
-    queryable-state.server.ports: 9000-9009
-    queryable-state.proxy.ports: 9010-9019
-EOL
+    set_config_key "queryable-state.server.ports" "9000-9009"
+    set_config_key "queryable-state.proxy.ports" "9010-9019"
 }
 
 function get_node_ip {
@@ -317,6 +299,20 @@ function start_cluster {
   wait_dispatcher_running
 }
 
+function wait_sql_gateway_running {
+  local query_url="${REST_PROTOCOL}://${NODENAME}:8083/info"
+  wait_rest_endpoint_up "${query_url}" "SqlGateway" "Apache Flink"
+}
+
+function start_sql_gateway() {
+  "$FLINK_DIR"/bin/sql-gateway.sh start
+  wait_sql_gateway_running
+}
+
+function stop_sql_gateway() {
+  "$FLINK_DIR"/bin/sql-gateway.sh stop
+}
+
 function start_taskmanagers {
     local tmnum=$1
     local c
@@ -371,32 +367,60 @@ function wait_for_number_of_running_tms {
 }
 
 function check_logs_for_errors {
+  internal_check_logs_for_errors
+}
+
+# check logs for errors, the arguments are the additional allowed errors
+function internal_check_logs_for_errors {
   echo "Checking for errors..."
-  error_count=$(grep -rv "GroupCoordinatorNotAvailableException" $FLINK_LOG_DIR \
-      | grep -v "RetriableCommitFailedException" \
-      | grep -v "NoAvailableBrokersException" \
-      | grep -v "Async Kafka commit failed" \
-      | grep -v "DisconnectException" \
-      | grep -v "Cannot connect to ResourceManager right now" \
-      | grep -v "AskTimeoutException" \
-      | grep -v "Error while loading kafka-version.properties" \
-      | grep -v "WARN  akka.remote.transport.netty.NettyTransport" \
-      | grep -v "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
-      | grep -v "jvm-exit-on-fatal-error" \
-      | grep -v 'INFO.*AWSErrorCode' \
-      | grep -v "RejectedExecutionException" \
-      | grep -v "An exception was thrown by an exception handler" \
-      | grep -v "java.lang.NoClassDefFoundError: org/apache/hadoop/yarn/exceptions/YarnException" \
-      | grep -v "java.lang.NoClassDefFoundError: org/apache/hadoop/conf/Configuration" \
-      | grep -v "org.apache.commons.beanutils.FluentPropertyBeanIntrospector.*Error when creating PropertyDescriptor.*org.apache.commons.configuration2.AbstractConfiguration.setProperty(java.lang.String,java.lang.Object)! Ignoring this property." \
-      | grep -v "Error while loading kafka-version.properties :null" \
-      | grep -v "[Terror] modules" \
-      | grep -v "HeapDumpOnOutOfMemoryError" \
-      | grep -v "error_prone_annotations" \
-      | grep -v "Error sending fetch request" \
-      | grep -v "WARN  akka.remote.ReliableDeliverySupervisor" \
-      | grep -v "Options.*error_*" \
-      | grep -ic "error" || true)
+
+  local additional_allowed_errors=()
+  local index=0
+  for error in "$@"; do
+    additional_allowed_errors[index]="$error"
+    index=$index+1
+  done
+
+  local default_allowed_errors=("GroupCoordinatorNotAvailableException" \
+  "RetriableCommitFailedException" \
+  "NoAvailableBrokersException" \
+  "Async Kafka commit failed" \
+  "DisconnectException" \
+  "Cannot connect to ResourceManager right now" \
+  "AskTimeoutException" \
+  "Error while loading kafka-version.properties" \
+  "WARN  org.apache.pekko.remote.transport.netty.NettyTransport" \
+  "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
+  "jvm-exit-on-fatal-error" \
+  'INFO.*AWSErrorCode' \
+  "RejectedExecutionException" \
+  "An exception was thrown by an exception handler" \
+  "java.lang.NoClassDefFoundError: org/apache/hadoop/yarn/exceptions/YarnException" \
+  "java.lang.NoClassDefFoundError: org/apache/hadoop/conf/Configuration" \
+  "org.apache.commons.beanutils.FluentPropertyBeanIntrospector.*Error when creating PropertyDescriptor.*org.apache.commons.configuration2.AbstractConfiguration.setProperty(java.lang.String,java.lang.Object)! Ignoring this property." \
+  "Error while loading kafka-version.properties :null" \
+  "[Terror] modules" \
+  "HeapDumpOnOutOfMemoryError" \
+  "error_prone_annotations" \
+  "Error sending fetch request" \
+  "WARN  org.apache.pekko.remote.ReliableDeliverySupervisor" \
+  "Options.*error_*" \
+  "not packaged with this application")
+
+  local all_allowed_errors=("${default_allowed_errors[@]}" "${additional_allowed_errors[@]}")
+
+  # generate the grep command
+  local grep_command=""
+  for error in "${all_allowed_errors[@]}"; do
+    if [[ $grep_command == "" ]]; then
+      grep_command="grep -rv \"$error\" $FLINK_LOG_DIR"
+    else
+      grep_command="$grep_command | grep -v \"$error\""
+    fi
+  done
+  grep_command="$grep_command | grep -ic \"error\" || true"
+
+  error_count=$(eval "$grep_command")
   if [[ ${error_count} -gt 0 ]]; then
     echo "Found error in log files; printing first 500 lines; see full logs for details:"
     find $FLINK_LOG_DIR/ -type f -exec head -n 500 {} \;
@@ -406,38 +430,60 @@ function check_logs_for_errors {
   fi
 }
 
-function check_logs_for_exceptions {
+# check logs for exceptions, the arguments are the additional allowed exceptions
+function internal_check_logs_for_exceptions {
   echo "Checking for exceptions..."
-  exception_count=$(grep -rv "GroupCoordinatorNotAvailableException" $FLINK_LOG_DIR \
-   | grep -v "due to CancelTaskException" \
-   | grep -v "RetriableCommitFailedException" \
-   | grep -v "NoAvailableBrokersException" \
-   | grep -v "Async Kafka commit failed" \
-   | grep -v "DisconnectException" \
-   | grep -v "Cannot connect to ResourceManager right now" \
-   | grep -v "AskTimeoutException" \
-   | grep -v "WARN  akka.remote.transport.netty.NettyTransport" \
-   | grep -v  "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
-   | grep -v 'INFO.*AWSErrorCode' \
-   | grep -v "RejectedExecutionException" \
-   | grep -v "CancellationException" \
-   | grep -v "An exception was thrown by an exception handler" \
-   | grep -v "Caused by: java.lang.ClassNotFoundException: org.apache.hadoop.yarn.exceptions.YarnException" \
-   | grep -v "Caused by: java.lang.ClassNotFoundException: org.apache.hadoop.conf.Configuration" \
-   | grep -v "java.lang.NoClassDefFoundError: org/apache/hadoop/yarn/exceptions/YarnException" \
-   | grep -v "java.lang.NoClassDefFoundError: org/apache/hadoop/conf/Configuration" \
-   | grep -v "java.lang.Exception: Execution was suspended" \
-   | grep -v "java.io.InvalidClassException: org.apache.flink.formats.avro.typeutils.AvroSerializer" \
-   | grep -v "Caused by: java.lang.Exception: JobManager is shutting down" \
-   | grep -v "java.lang.Exception: Artificial failure" \
-   | grep -v "org.apache.flink.runtime.checkpoint.CheckpointException" \
-   | grep -v "org.apache.flink.runtime.JobException: Recovery is suppressed" \
-   | grep -v "WARN  akka.remote.ReliableDeliverySupervisor" \
-   | grep -v "RecipientUnreachableException" \
-   | grep -v "SerializedCheckpointException.unwrap" \
-   | grep -v "ExecutionGraphException: The execution attempt" \
-   | grep -v "Cannot find task to fail for execution" \
-   | grep -ic "exception" || true)
+
+  local additional_allowed_exceptions=()
+  local index=0
+  for exception in "$@"; do
+    additional_allowed_exceptions[index]="$exception"
+    index=$index+1
+  done
+
+  local default_allowed_exceptions=("GroupCoordinatorNotAvailableException" \
+  "due to CancelTaskException" \
+  "RetriableCommitFailedException" \
+  "NoAvailableBrokersException" \
+  "Async Kafka commit failed" \
+  "DisconnectException" \
+  "Cannot connect to ResourceManager right now" \
+  "AskTimeoutException" \
+  "WARN  org.apache.pekko.remote.transport.netty.NettyTransport" \
+  "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
+  'INFO.*AWSErrorCode' \
+  "RejectedExecutionException" \
+  "CancellationException" \
+  "An exception was thrown by an exception handler" \
+  "Caused by: java.lang.ClassNotFoundException: org.apache.hadoop.yarn.exceptions.YarnException" \
+  "Caused by: java.lang.ClassNotFoundException: org.apache.hadoop.conf.Configuration" \
+  "java.lang.NoClassDefFoundError: org/apache/hadoop/yarn/exceptions/YarnException" \
+  "java.lang.NoClassDefFoundError: org/apache/hadoop/conf/Configuration" \
+  "java.lang.Exception: Execution was suspended" \
+  "java.io.InvalidClassException: org.apache.flink.formats.avro.typeutils.AvroSerializer" \
+  "Caused by: java.lang.Exception: JobManager is shutting down" \
+  "java.lang.Exception: Artificial failure" \
+  "org.apache.flink.runtime.checkpoint.CheckpointException" \
+  "org.apache.flink.runtime.JobException: Recovery is suppressed" \
+  "WARN  org.apache.pekko.remote.ReliableDeliverySupervisor" \
+  "RecipientUnreachableException" \
+  "completeExceptionally" \
+  "SerializedCheckpointException.unwrap")
+
+  local all_allowed_exceptions=("${default_allowed_exceptions[@]}" "${additional_allowed_exceptions[@]}")
+
+  # generate the grep command
+  local grep_command=""
+  for exception in "${all_allowed_exceptions[@]}"; do
+    if [[ $grep_command == "" ]]; then
+      grep_command="grep -rv \"$exception\" $FLINK_LOG_DIR"
+    else
+      grep_command="$grep_command | grep -v \"$exception\""
+    fi
+  done
+  grep_command="$grep_command | grep -ic \"exception\" || true"
+
+  exception_count=$(eval "$grep_command")
   if [[ ${exception_count} -gt 0 ]]; then
     echo "Found exception in log files; printing first 500 lines; see full logs for details:"
     find $FLINK_LOG_DIR/ -type f -exec head -n 500 {} \;
@@ -445,6 +491,10 @@ function check_logs_for_exceptions {
   else
     echo "No exceptions in log files."
   fi
+}
+
+function check_logs_for_exceptions() {
+  internal_check_logs_for_exceptions
 }
 
 function check_logs_for_non_empty_out_files {
@@ -639,6 +689,13 @@ function setup_flink_slf4j_metric_reporter() {
   set_config_key "metrics.reporter.slf4j.factory.class" "org.apache.flink.metrics.slf4j.Slf4jReporterFactory"
   set_config_key "metrics.reporter.slf4j.interval" "1 SECONDS"
   set_config_key "metrics.reporter.slf4j.filter.includes" "*:${METRIC_NAME_PATTERN}"
+}
+
+function get_job_exceptions {
+  local job_id=$1
+  local json=$(curl ${CURL_SSL_ARGS} -s ${REST_PROTOCOL}://${NODENAME}:8081/jobs/${job_id}/exceptions)
+
+  echo ${json}
 }
 
 function get_job_metric {
@@ -885,8 +942,12 @@ function extract_job_id_from_job_submission_return() {
 
 kill_test_watchdog() {
     local watchdog_pid=$(cat $TEST_DATA_DIR/job_watchdog.pid)
-    echo "Stopping job timeout watchdog (with pid=$watchdog_pid)"
-    kill $watchdog_pid
+    if kill -0 $watchdog_pid > /dev/null 2>&1; then
+        echo "Stopping job timeout watchdog (with pid=$watchdog_pid)"
+        kill $watchdog_pid
+    else
+        echo "No watchdog process with pid=$watchdog_pid present, anymore. No action required to clean the watchdog process up."
+    fi
 }
 
 #

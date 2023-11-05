@@ -60,7 +60,7 @@ public class BatchExecDynamicFilteringDataCollector extends ExecNodeBase<Object>
                     .withDescription(
                             "If the collector collects more data than the threshold (default is 8M), "
                                     + "an empty DynamicFilterEvent with a flag only will be sent to Coordinator, "
-                                    + "which could avoid exceeding the akka limit and out-of-memory (see "
+                                    + "which could avoid exceeding the pekko limit and out-of-memory (see "
                                     + AkkaOptions.FRAMESIZE.key()
                                     + "). Otherwise a DynamicFilterEvent with all deduplicated records will be sent to Coordinator.");
 
@@ -102,6 +102,7 @@ public class BatchExecDynamicFilteringDataCollector extends ExecNodeBase<Object>
                 createTransformationDescription(config),
                 factory,
                 InternalTypeInfo.of(getOutputType()),
-                1); // parallelism should always be 1
+                1,
+                true); // parallelism should always be 1
     }
 }

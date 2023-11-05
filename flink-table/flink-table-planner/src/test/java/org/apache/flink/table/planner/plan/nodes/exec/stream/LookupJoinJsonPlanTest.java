@@ -201,7 +201,7 @@ public class LookupJoinJsonPlanTest extends TableTestBase {
         // LookupTable has sync func only, just verify the hint has take effect
         util.verifyJsonPlan(
                 "INSERT INTO MySink1 SELECT "
-                        + "/*+ LOOKUP('table'='LookupTable', 'async'='true', 'output-mode'='allow_unordered') */ * "
+                        + "/*+ LOOKUP('table'='D', 'async'='true', 'output-mode'='allow_unordered') */ * "
                         + "FROM MyTable AS T JOIN LookupTable "
                         + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id");
     }
@@ -211,7 +211,7 @@ public class LookupJoinJsonPlanTest extends TableTestBase {
         // LookupTable has sync func only, just verify the hint has take effect
         util.verifyJsonPlan(
                 "INSERT INTO MySink1 SELECT "
-                        + "/*+ LOOKUP('table'='LookupTable', 'async'='true', 'timeout'='600s', 'capacity'='1000') */ * "
+                        + "/*+ LOOKUP('table'='D', 'async'='true', 'timeout'='600s', 'capacity'='1000') */ * "
                         + "FROM MyTable AS T JOIN LookupTable "
                         + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id");
     }
@@ -220,7 +220,7 @@ public class LookupJoinJsonPlanTest extends TableTestBase {
     public void testJoinTemporalTableWithRetryHint() {
         util.verifyJsonPlan(
                 "INSERT INTO MySink1 SELECT "
-                        + "/*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
+                        + "/*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
                         + "FROM MyTable AS T JOIN LookupTable "
                         + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id");
     }
@@ -230,7 +230,7 @@ public class LookupJoinJsonPlanTest extends TableTestBase {
         // LookupTable has sync func only, just verify the hint has take effect
         util.verifyJsonPlan(
                 "INSERT INTO MySink1 SELECT "
-                        + "/*+ LOOKUP('table'='LookupTable', 'async'='true', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
+                        + "/*+ LOOKUP('table'='D', 'async'='true', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
                         + "FROM MyTable AS T JOIN LookupTable "
                         + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id");
     }
@@ -240,8 +240,34 @@ public class LookupJoinJsonPlanTest extends TableTestBase {
         // LookupTable has sync func only, just verify the hint has take effect
         util.verifyJsonPlan(
                 "INSERT INTO MySink1 SELECT "
-                        + "/*+ LOOKUP('table'='LookupTable', 'async'='true', 'timeout'='600s', 'capacity'='1000', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
+                        + "/*+ LOOKUP('table'='D', 'async'='true', 'timeout'='600s', 'capacity'='1000', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * "
                         + "FROM MyTable AS T JOIN LookupTable "
                         + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id");
+    }
+
+    @Test
+    public void testLeftJoinTemporalTableWithPreFilter() {
+        util.verifyJsonPlan(
+                "INSERT INTO MySink1 SELECT * "
+                        + "FROM MyTable AS T LEFT JOIN LookupTable "
+                        + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id AND T.b > 'abc'");
+    }
+
+    @Test
+    public void testLeftJoinTemporalTableWithPostFilter() {
+        util.verifyJsonPlan(
+                "INSERT INTO MySink1 SELECT * "
+                        + "FROM MyTable AS T LEFT JOIN LookupTable "
+                        + "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id "
+                        + "AND CHAR_LENGTH(D.name) > CHAR_LENGTH(T.b)");
+    }
+
+    @Test
+    public void testLeftJoinTemporalTableWithMultiJoinConditions() {
+        util.verifyJsonPlan(
+                "INSERT INTO MySink1 SELECT * "
+                        + "FROM MyTable AS T LEFT JOIN LookupTable "
+                        + "FOR SYSTEM_TIME AS OF T.proctime AS D "
+                        + "ON T.a = D.id AND T.b > 'abc' AND T.b <> D.name AND T.c = 100");
     }
 }

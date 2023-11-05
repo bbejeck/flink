@@ -25,8 +25,8 @@
           },
           "partitionKeys" : [ ],
           "options" : {
-            "connector" : "values",
-            "bounded" : "false"
+            "bounded" : "false",
+            "connector" : "values"
           }
         }
       },
@@ -64,7 +64,7 @@
         "type" : "INT NOT NULL"
       }, {
         "kind" : "LITERAL",
-        "value" : "1",
+        "value" : 1,
         "type" : "INT NOT NULL"
       } ],
       "type" : "BOOLEAN NOT NULL"
@@ -136,6 +136,11 @@
     "aggCallNeedRetractions" : [ false, false, false ],
     "generateUpdateBefore" : true,
     "needRetraction" : false,
+    "state" : [ {
+      "index" : 0,
+      "ttl" : "0 ms",
+      "name" : "groupAggregateState"
+    } ],
     "inputProperties" : [ {
       "requiredDistribution" : {
         "type" : "UNKNOWN"
@@ -199,6 +204,7 @@
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
       "table.exec.sink.not-null-enforcer" : "ERROR",
+      "table.exec.sink.rowtime-inserter" : "ENABLED",
       "table.exec.sink.type-length-enforcer" : "IGNORE",
       "table.exec.sink.upsert-materialize" : "AUTO"
     },
@@ -224,14 +230,15 @@
           },
           "partitionKeys" : [ ],
           "options" : {
+            "connector" : "values",
             "sink-insert-only" : "false",
-            "table-sink-class" : "DEFAULT",
-            "connector" : "values"
+            "table-sink-class" : "DEFAULT"
           }
         }
       }
     },
     "inputChangelogMode" : [ "INSERT", "UPDATE_BEFORE", "UPDATE_AFTER" ],
+    "inputUpsertKey" : [ 0 ],
     "inputProperties" : [ {
       "requiredDistribution" : {
         "type" : "UNKNOWN"
@@ -240,7 +247,6 @@
       "priority" : 0
     } ],
     "outputType" : "ROW<`b` BIGINT, `cnt_a` BIGINT, `max_b` BIGINT, `min_c` VARCHAR(2147483647)>",
-    "inputUpsertKey" : [ 0 ],
     "description" : "Sink(table=[default_catalog.default_database.MySink], fields=[b, cnt_a, max_b, min_c])"
   } ],
   "edges" : [ {

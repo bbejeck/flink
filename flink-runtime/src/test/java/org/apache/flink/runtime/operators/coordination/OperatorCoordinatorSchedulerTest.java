@@ -67,16 +67,15 @@ import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorOperatorEventGateway;
 import org.apache.flink.runtime.testtasks.NoOpInvokable;
 import org.apache.flink.testutils.TestingUtils;
-import org.apache.flink.testutils.executor.TestExecutorResource;
+import org.apache.flink.testutils.executor.TestExecutorExtension;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.SerializedValue;
-import org.apache.flink.util.TestLogger;
 import org.apache.flink.util.concurrent.FutureUtils;
 
-import org.junit.After;
-import org.junit.ClassRule;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -89,6 +88,7 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static org.apache.flink.core.testutils.FlinkAssertions.anyCauseMatches;
@@ -101,22 +101,22 @@ import static org.assertj.core.api.Assertions.fail;
  * Tests for the integration of the {@link OperatorCoordinator} with the scheduler, to ensure the
  * relevant actions are leading to the right method invocations on the coordinator.
  */
-public class OperatorCoordinatorSchedulerTest extends TestLogger {
+class OperatorCoordinatorSchedulerTest {
 
     private final JobVertexID testVertexId = new JobVertexID();
     private final OperatorID testOperatorId = new OperatorID();
 
-    @ClassRule
-    public static final TestExecutorResource<ScheduledExecutorService> EXECUTOR_RESOURCE =
-            TestingUtils.defaultExecutorResource();
+    @RegisterExtension
+    private static final TestExecutorExtension<ScheduledExecutorService> EXECUTOR_EXTENSION =
+            TestingUtils.defaultExecutorExtension();
 
     private final ManuallyTriggeredScheduledExecutorService executor =
             new ManuallyTriggeredScheduledExecutorService();
 
     private DefaultScheduler createdScheduler;
 
-    @After
-    public void shutdownScheduler() throws Exception {
+    @AfterEach
+    void shutdownScheduler() throws Exception {
         if (createdScheduler != null) {
             closeScheduler(createdScheduler);
         }
@@ -127,7 +127,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     // ------------------------------------------------------------------------
 
     @Test
-    public void testCoordinatorStartedWhenSchedulerStarts() throws Exception {
+    void testCoordinatorStartedWhenSchedulerStarts() throws Exception {
         final DefaultScheduler scheduler = createAndStartScheduler();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -135,7 +135,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testCoordinatorDisposedWhenSchedulerStops() throws Exception {
+    void testCoordinatorDisposedWhenSchedulerStops() throws Exception {
         final DefaultScheduler scheduler = createAndStartScheduler();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -145,7 +145,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testFailureToStartPropagatesExceptions() throws Exception {
+    void testFailureToStartPropagatesExceptions() throws Exception {
         final OperatorCoordinator.Provider failingCoordinatorProvider =
                 new TestingOperatorCoordinator.Provider(
                         testOperatorId, CoordinatorThatFailsInStart::new);
@@ -160,7 +160,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testFailureToStartClosesCoordinator() throws Exception {
+    void testFailureToStartClosesCoordinator() throws Exception {
         final OperatorCoordinator.Provider failingCoordinatorProvider =
                 new TestingOperatorCoordinator.Provider(
                         testOperatorId, CoordinatorThatFailsInStart::new);
@@ -176,7 +176,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void deployingTaskFailureNotifiesCoordinator() throws Exception {
+    void deployingTaskFailureNotifiesCoordinator() throws Exception {
         final DefaultScheduler scheduler = createAndStartScheduler();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -186,7 +186,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void runningTaskFailureNotifiesCoordinator() throws Exception {
+    void runningTaskFailureNotifiesCoordinator() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -196,7 +196,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void cancellationAsPartOfFailoverNotifiesCoordinator() throws Exception {
+    void cancellationAsPartOfFailoverNotifiesCoordinator() throws Exception {
         final DefaultScheduler scheduler = createSchedulerWithAllRestartOnFailureAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -206,7 +206,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void taskRepeatedFailureNotifyCoordinator() throws Exception {
+    void taskRepeatedFailureNotifyCoordinator() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -217,7 +217,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void taskGatewayNotSetBeforeTasksRunning() throws Exception {
+    void taskGatewayNotSetBeforeTasksRunning() throws Exception {
         final DefaultScheduler scheduler = createAndStartScheduler();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
         final OperatorCoordinator.SubtaskGateway gateway = coordinator.getSubtaskGateway(0);
@@ -226,7 +226,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void taskGatewayAvailableWhenTasksRunning() throws Exception {
+    void taskGatewayAvailableWhenTasksRunning() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
         final OperatorCoordinator.SubtaskGateway gateway = coordinator.getSubtaskGateway(0);
@@ -235,7 +235,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void taskTaskManagerFailuresAreReportedBack() throws Exception {
+    void taskTaskManagerFailuresAreReportedBack() throws Exception {
         final DefaultScheduler scheduler =
                 createSchedulerAndDeployTasks(new FailingTaskExecutorOperatorEventGateway());
 
@@ -252,9 +252,9 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     // THIS SITUATION AT THE MOMENT
     // WE KEEP THESE TESTS HERE TO ENABLE THEM ONCE THE SCHEDULER'S CONTRACT SUPPORTS THEM
 
-    @Ignore
+    @Disabled
     @Test
-    public void deployingTaskCancellationNotifiesCoordinator() throws Exception {
+    void deployingTaskCancellationNotifiesCoordinator() throws Exception {
         final DefaultScheduler scheduler = createAndStartScheduler();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -263,9 +263,9 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
         assertThat(coordinator.getFailedTasks()).hasSize(1).containsExactly(1);
     }
 
-    @Ignore
+    @Disabled
     @Test
-    public void runningTaskCancellationNotifiesCoordinator() throws Exception {
+    void runningTaskCancellationNotifiesCoordinator() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -279,7 +279,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     // ------------------------------------------------------------------------
 
     @Test
-    public void testTakeCheckpoint() throws Exception {
+    void testTakeCheckpoint() throws Exception {
         final byte[] checkpointData = new byte[656];
         new Random().nextBytes(checkpointData);
 
@@ -304,7 +304,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testSnapshotSyncFailureFailsCheckpoint() throws Exception {
+    void testSnapshotSyncFailureFailsCheckpoint() throws Exception {
         final OperatorCoordinator.Provider failingCoordinatorProvider =
                 new TestingOperatorCoordinator.Provider(
                         testOperatorId, CoordinatorThatFailsCheckpointing::new);
@@ -317,7 +317,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testSnapshotAsyncFailureFailsCheckpoint() throws Exception {
+    void testSnapshotAsyncFailureFailsCheckpoint() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -332,7 +332,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testSavepointRestoresCoordinator() throws Exception {
+    void testSavepointRestoresCoordinator() throws Exception {
         final byte[] testCoordinatorState = new byte[123];
         new Random().nextBytes(testCoordinatorState);
 
@@ -345,7 +345,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testGlobalFailureResetsToCheckpoint() throws Exception {
+    void testGlobalFailureResetsToCheckpoint() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -359,7 +359,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testGlobalFailureBeforeCheckpointResetsToEmptyState() throws Exception {
+    void testGlobalFailureBeforeCheckpointResetsToEmptyState() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -373,7 +373,27 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testGlobalFailoverDoesNotNotifyLocalRestore() throws Exception {
+    void testGlobalFailureTwiceWillNotResetToCheckpointTwice() throws Exception {
+        final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
+        final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
+        AtomicInteger resetToCheckpointCounter = new AtomicInteger(0);
+        coordinator.setResetToCheckpointConsumer(
+                (ignore1, ignore2) -> resetToCheckpointCounter.incrementAndGet());
+
+        // fail global twice.
+        scheduler.handleGlobalFailure(new TestException());
+        failGlobalAndRestart(scheduler, new TestException());
+
+        assertThat(resetToCheckpointCounter).hasValue(1);
+        assertThat(coordinator.getLastRestoredCheckpointState())
+                .as("coordinator should have null restored state")
+                .isEqualTo(TestingOperatorCoordinator.NULL_RESTORE_VALUE);
+        assertThat(coordinator.getLastRestoredCheckpointId())
+                .isEqualTo(OperatorCoordinator.NO_CHECKPOINT);
+    }
+
+    @Test
+    void testGlobalFailoverDoesNotNotifyLocalRestore() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -384,7 +404,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testLocalFailoverResetsTask() throws Exception {
+    void testLocalFailoverResetsTask() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -394,12 +414,12 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
         assertThat(coordinator.getRestoredTasks()).hasSize(1);
         final TestingOperatorCoordinator.SubtaskAndCheckpoint restoredTask =
                 coordinator.getRestoredTasks().get(0);
-        assertThat(restoredTask.subtaskIndex).isEqualTo(1);
+        assertThat(restoredTask.subtaskIndex).isOne();
         assertThat(restoredTask.checkpointId).isEqualTo(checkpointId);
     }
 
     @Test
-    public void testLocalFailoverBeforeCheckpointResetsTask() throws Exception {
+    void testLocalFailoverBeforeCheckpointResetsTask() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -408,12 +428,12 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
         assertThat(coordinator.getRestoredTasks()).hasSize(1);
         final TestingOperatorCoordinator.SubtaskAndCheckpoint restoredTask =
                 coordinator.getRestoredTasks().get(0);
-        assertThat(restoredTask.subtaskIndex).isEqualTo(1);
+        assertThat(restoredTask.subtaskIndex).isOne();
         assertThat(restoredTask.checkpointId).isEqualTo(OperatorCoordinator.NO_CHECKPOINT);
     }
 
     @Test
-    public void testLocalFailoverDoesNotResetToCheckpoint() throws Exception {
+    void testLocalFailoverDoesNotResetToCheckpoint() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -426,7 +446,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testConfirmCheckpointComplete() throws Exception {
+    void testConfirmCheckpointComplete() throws Exception {
         final DefaultScheduler scheduler = createSchedulerAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -443,7 +463,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     // ------------------------------------------------------------------------
 
     @Test
-    public void testBatchGlobalFailureResetsToEmptyState() throws Exception {
+    void testBatchGlobalFailureResetsToEmptyState() throws Exception {
         final DefaultScheduler scheduler = createSchedulerWithoutCheckpointingAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -457,7 +477,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testBatchGlobalFailoverDoesNotNotifyLocalRestore() throws Exception {
+    void testBatchGlobalFailoverDoesNotNotifyLocalRestore() throws Exception {
         final DefaultScheduler scheduler = createSchedulerWithoutCheckpointingAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -467,7 +487,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testBatchLocalFailoverResetsTask() throws Exception {
+    void testBatchLocalFailoverResetsTask() throws Exception {
         final DefaultScheduler scheduler = createSchedulerWithoutCheckpointingAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -476,12 +496,12 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
         assertThat(coordinator.getRestoredTasks()).hasSize(1);
         final TestingOperatorCoordinator.SubtaskAndCheckpoint restoredTask =
                 coordinator.getRestoredTasks().get(0);
-        assertThat(restoredTask.subtaskIndex).isEqualTo(1);
+        assertThat(restoredTask.subtaskIndex).isOne();
         assertThat(restoredTask.checkpointId).isEqualTo(OperatorCoordinator.NO_CHECKPOINT);
     }
 
     @Test
-    public void testBatchLocalFailoverDoesNotResetToCheckpoint() throws Exception {
+    void testBatchLocalFailoverDoesNotResetToCheckpoint() throws Exception {
         final DefaultScheduler scheduler = createSchedulerWithoutCheckpointingAndDeployTasks();
         final TestingOperatorCoordinator coordinator = getCoordinator(scheduler);
 
@@ -498,7 +518,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
 
     @Test
     @SuppressWarnings("unchecked")
-    public void testDeliveringClientRequestToRequestHandler() throws Exception {
+    void testDeliveringClientRequestToRequestHandler() throws Exception {
         final OperatorCoordinator.Provider provider =
                 new TestingCoordinationRequestHandler.Provider(testOperatorId);
         final DefaultScheduler scheduler = createScheduler(provider);
@@ -516,7 +536,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testDeliveringClientRequestToNonRequestHandler() throws Exception {
+    void testDeliveringClientRequestToNonRequestHandler() throws Exception {
         final OperatorCoordinator.Provider provider =
                 new TestingOperatorCoordinator.Provider(testOperatorId);
         final DefaultScheduler scheduler = createScheduler(provider);
@@ -532,7 +552,7 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
     }
 
     @Test
-    public void testDeliveringClientRequestToNonExistingCoordinator() throws Exception {
+    void testDeliveringClientRequestToNonExistingCoordinator() throws Exception {
         final OperatorCoordinator.Provider provider =
                 new TestingOperatorCoordinator.Provider(testOperatorId);
         final DefaultScheduler scheduler = createScheduler(provider);
@@ -684,12 +704,12 @@ public class OperatorCoordinatorSchedulerTest extends TestLogger {
         final DefaultSchedulerBuilder schedulerBuilder =
                 taskExecutorOperatorEventGateway == null
                         ? createSchedulerBuilder(
-                                jobGraph, mainThreadExecutor, EXECUTOR_RESOURCE.getExecutor())
+                                jobGraph, mainThreadExecutor, EXECUTOR_EXTENSION.getExecutor())
                         : createSchedulerBuilder(
                                 jobGraph,
                                 mainThreadExecutor,
                                 taskExecutorOperatorEventGateway,
-                                EXECUTOR_RESOURCE.getExecutor());
+                                EXECUTOR_EXTENSION.getExecutor());
         if (restartAllOnFailover) {
             schedulerBuilder.setFailoverStrategyFactory(new RestartAllFailoverStrategy.Factory());
         }

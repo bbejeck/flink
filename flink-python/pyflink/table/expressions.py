@@ -94,6 +94,8 @@ def col(name: str) -> Expression:
         >>> tab.select(col("key"), col("value"))
 
     :param name: the field name to refer to
+
+    .. seealso:: :func:`~pyflink.table.expressions.with_all_columns`
     """
     return _unary_op("col", name)
 
@@ -483,6 +485,26 @@ def map_(key, value, *tail) -> Expression:
     return _ternary_op("map", key, value, tail)
 
 
+def map_from_arrays(key, value) -> Expression:
+    """
+    Creates a map from an array of keys and an array of values.
+
+    Example:
+    ::
+
+        >>> tab.select(
+        >>>     map_from_arrays(
+        >>>         array("key1", "key2", "key3"),
+        >>>         array(1, 2, 3)
+        >>>     ))
+
+    .. note::
+
+        both arrays should have the same length.
+    """
+    return _binary_op("mapFromArrays", key, value)
+
+
 def row_interval(rows: int) -> Expression:
     """
     Creates an interval of rows.
@@ -665,6 +687,22 @@ def coalesce(*args) -> Expression:
     gateway = get_gateway()
     args = to_jarray(gateway.jvm.Object, [_get_java_expression(arg) for arg in args])
     return _unary_op("coalesce", args)
+
+
+def with_all_columns() -> Expression:
+    """
+    Creates an expression that selects all columns. It can be used wherever an array of
+    expression is accepted such as function calls, projections, or groupings.
+
+    This expression is a synonym of col("*"). It is semantically equal to SELECT * in
+    SQL when used in a projection.
+
+    e.g. tab.select(with_all_columns())
+
+    .. seealso:: :func:`~pyflink.table.expressions.with_columns`
+                 :func:`~pyflink.table.expressions.without_columns`
+    """
+    return _leaf_op("withAllColumns")
 
 
 def with_columns(head, *tails) -> Expression:

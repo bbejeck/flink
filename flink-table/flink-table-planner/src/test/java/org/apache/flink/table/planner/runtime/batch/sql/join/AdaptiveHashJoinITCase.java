@@ -18,9 +18,7 @@
 
 package org.apache.flink.table.planner.runtime.batch.sql.join;
 
-import org.apache.flink.api.common.BatchShuffleMode;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
@@ -76,8 +74,6 @@ public class AdaptiveHashJoinITCase extends TestLogger {
         tEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
-        tEnv.getConfig()
-                .set(ExecutionOptions.BATCH_SHUFFLE_MODE, BatchShuffleMode.ALL_EXCHANGES_PIPELINED);
 
         JoinITCaseHelper.disableOtherJoinOpForJoin(tEnv, JoinType.HashJoin());
 
@@ -172,7 +168,7 @@ public class AdaptiveHashJoinITCase extends TestLogger {
 
     private void asserResult(String sinkTableName, int resultSize) {
         // Due to concern OOM and record value is same, here just assert result size
-        List<String> result = TestValuesTableFactory.getResults(sinkTableName);
+        List<String> result = TestValuesTableFactory.getResultsAsStrings(sinkTableName);
         assertThat(result.size()).isEqualTo(resultSize);
     }
 

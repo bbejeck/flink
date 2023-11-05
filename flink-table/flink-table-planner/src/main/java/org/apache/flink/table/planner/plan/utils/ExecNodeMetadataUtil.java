@@ -19,7 +19,6 @@
 package org.apache.flink.table.planner.plan.utils;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigUtils;
 import org.apache.flink.configuration.Configuration;
@@ -127,6 +126,7 @@ public final class ExecNodeMetadataUtil {
                     add(StreamExecRank.class);
                     add(StreamExecSink.class);
                     add(StreamExecSortLimit.class);
+                    add(StreamExecSort.class);
                     add(StreamExecTableSourceScan.class);
                     add(StreamExecTemporalJoin.class);
                     add(StreamExecTemporalSort.class);
@@ -164,7 +164,6 @@ public final class ExecNodeMetadataUtil {
                     add(StreamExecLegacySink.class);
                     add(StreamExecGroupTableAggregate.class);
                     add(StreamExecPythonGroupTableAggregate.class);
-                    add(StreamExecSort.class);
                     add(StreamExecMultipleInput.class);
                 }
             };
@@ -194,12 +193,11 @@ public final class ExecNodeMetadataUtil {
                 || UNSUPPORTED_JSON_SERDE_CLASSES.contains(execNode);
     }
 
-    @VisibleForTesting
-    static void addTestNode(Class<? extends ExecNode<?>> execNodeClass) {
+    public static void addTestNode(Class<? extends ExecNode<?>> execNodeClass) {
         addToLookupMap(execNodeClass);
     }
 
-    private static <T extends ExecNode<?>> List<ExecNodeMetadata> extractMetadataFromAnnotation(
+    public static <T extends ExecNode<?>> List<ExecNodeMetadata> extractMetadataFromAnnotation(
             Class<T> execNodeClass) {
         List<ExecNodeMetadata> metadata = new ArrayList<>();
         ExecNodeMetadata annotation = execNodeClass.getDeclaredAnnotation(ExecNodeMetadata.class);

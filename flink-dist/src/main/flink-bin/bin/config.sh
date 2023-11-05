@@ -32,7 +32,7 @@ constructFlinkClassPath() {
     done < <(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)
 
     local FLINK_DIST_COUNT
-    FLINK_DIST_COUNT="$(echo "$FLINK_DIST" | wc -l)"
+    FLINK_DIST_COUNT="$(echo "$FLINK_DIST" | tr -s ':' '\n' | grep -v '^$' | wc -l)"
 
     # If flink-dist*.jar cannot be resolved write error messages to stderr since stdout is stored
     # as the classpath and exit function with empty classpath to force process failure
@@ -75,7 +75,7 @@ findSqlGatewayJar() {
     # If flink-sql-gateway*.jar cannot be resolved write error messages to stderr since stdout is stored
     # as the classpath and exit function with empty classpath to force process failure
     if [[ "$SQL_GATEWAY" == "" ]]; then
-        (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_OPT_DIR.")
+        (>&2 echo "[ERROR] Flink sql gateway jar not found in $FLINK_OPT_DIR.")
         exit 1
     elif [[ "$SQL_GATEWAY_COUNT" -gt 1 ]]; then
         (>&2 echo "[ERROR] Multiple flink-sql-gateway*.jar found in $FLINK_OPT_DIR. Please resolve.")
@@ -85,6 +85,24 @@ findSqlGatewayJar() {
     echo "$SQL_GATEWAY"
 }
 
+findFlinkPythonJar() {
+    local FLINK_PYTHON
+    FLINK_PYTHON="$(find "$FLINK_OPT_DIR" -name 'flink-python*.jar')"
+    local FLINK_PYTHON_COUNT
+    FLINK_PYTHON_COUNT="$(echo "FLINK_PYTHON" | wc -l)"
+
+    # If flink-python*.jar cannot be resolved write error messages to stderr since stdout is stored
+    # as the classpath and exit function with empty classpath to force process failure
+    if [[ "$FLINK_PYTHON" == "" ]]; then
+        echo "[WARN] Flink python jar not found in $FLINK_OPT_DIR."
+    elif [[ "$FLINK_PYTHON_COUNT" -gt 1 ]]; then
+        (>&2 echo "[ERROR] Multiple flink-python*.jar found in $FLINK_OPT_DIR. Please resolve.")
+        exit 1
+    fi
+
+    echo "$FLINK_PYTHON"
+
+}
 # These are used to mangle paths that are passed to java when using
 # cygwin. Cygwin paths are like linux paths, i.e. /path/to/somewhere
 # but the windows java version expects them in Windows Format, i.e. C:\bla\blub.
@@ -135,11 +153,13 @@ readFromConfig() {
 
 DEFAULT_ENV_PID_DIR="/tmp"                          # Directory to store *.pid files to
 DEFAULT_ENV_LOG_MAX=10                              # Maximum number of old log files to keep
+DEFAULT_ENV_LOG_LEVEL="INFO"                        # Level of the root logger
 DEFAULT_ENV_JAVA_OPTS=""                            # Optional JVM args
 DEFAULT_ENV_JAVA_OPTS_JM=""                         # Optional JVM args (JobManager)
 DEFAULT_ENV_JAVA_OPTS_TM=""                         # Optional JVM args (TaskManager)
 DEFAULT_ENV_JAVA_OPTS_HS=""                         # Optional JVM args (HistoryServer)
 DEFAULT_ENV_JAVA_OPTS_CLI=""                        # Optional JVM args (Client)
+DEFAULT_ENV_JAVA_OPTS_SQL_GATEWAY=""                # Optional JVM args (Sql-Gateway)
 DEFAULT_ENV_SSH_OPTS=""                             # Optional SSH parameters running in cluster mode
 DEFAULT_YARN_CONF_DIR=""                            # YARN Configuration Directory, if necessary
 DEFAULT_HADOOP_CONF_DIR=""                          # Hadoop Configuration Directory, if necessary
@@ -154,6 +174,8 @@ KEY_TASKM_COMPUTE_NUMA="taskmanager.compute.numa"
 KEY_ENV_PID_DIR="env.pid.dir"
 KEY_ENV_LOG_DIR="env.log.dir"
 KEY_ENV_LOG_MAX="env.log.max"
+KEY_ENV_LOG_LEVEL="env.log.level"
+KEY_ENV_STD_REDIRECT_TO_FILE="env.stdout-err.redirect-to-file"
 KEY_ENV_YARN_CONF_DIR="env.yarn.conf.dir"
 KEY_ENV_HADOOP_CONF_DIR="env.hadoop.conf.dir"
 KEY_ENV_HBASE_CONF_DIR="env.hbase.conf.dir"
@@ -163,6 +185,7 @@ KEY_ENV_JAVA_OPTS_JM="env.java.opts.jobmanager"
 KEY_ENV_JAVA_OPTS_TM="env.java.opts.taskmanager"
 KEY_ENV_JAVA_OPTS_HS="env.java.opts.historyserver"
 KEY_ENV_JAVA_OPTS_CLI="env.java.opts.client"
+KEY_ENV_JAVA_OPTS_SQL_GATEWAY="env.java.opts.sql-gateway"
 KEY_ENV_SSH_OPTS="env.ssh.opts"
 KEY_HIGH_AVAILABILITY="high-availability.type"
 KEY_ZK_HEAP_MB="zookeeper.heap.mb"
@@ -273,6 +296,15 @@ if [ -z "${MAX_LOG_FILE_NUMBER}" ]; then
     export MAX_LOG_FILE_NUMBER
 fi
 
+if [ -z "${ROOT_LOG_LEVEL}" ]; then
+    ROOT_LOG_LEVEL=$(readFromConfig ${KEY_ENV_LOG_LEVEL} "${DEFAULT_ENV_LOG_LEVEL}" "${YAML_CONF}")
+    export ROOT_LOG_LEVEL
+fi
+
+if [ -z "${STD_REDIRECT_TO_FILE}" ]; then
+    STD_REDIRECT_TO_FILE=$(readFromConfig ${KEY_ENV_STD_REDIRECT_TO_FILE} "false" "${YAML_CONF}")
+fi
+
 if [ -z "${FLINK_LOG_DIR}" ]; then
     FLINK_LOG_DIR=$(readFromConfig ${KEY_ENV_LOG_DIR} "${DEFAULT_FLINK_LOG_DIR}" "${YAML_CONF}")
 fi
@@ -301,7 +333,13 @@ if [ -z "${FLINK_ENV_JAVA_OPTS}" ]; then
     fi
 
     # Remove leading and ending double quotes (if present) of value
-    FLINK_ENV_JAVA_OPTS="$( echo "${FLINK_ENV_JAVA_OPTS}" | sed -e 's/^"//'  -e 's/"$//' )"
+    FLINK_ENV_JAVA_OPTS="-XX:+IgnoreUnrecognizedVMOptions $( echo "${FLINK_ENV_JAVA_OPTS}" | sed -e 's/^"//'  -e 's/"$//' )"
+
+    JAVA_SPEC_VERSION=`${JAVA_HOME}/bin/java -XshowSettings:properties 2>&1 | grep "java.specification.version" | cut -d "=" -f 2 | tr -d '[:space:]' | rev | cut -d "." -f 1 | rev`
+    if [[ $(( $JAVA_SPEC_VERSION > 17 )) == 1 ]]; then
+      # set security manager property to allow calls to System.setSecurityManager() at runtime
+      FLINK_ENV_JAVA_OPTS="$FLINK_ENV_JAVA_OPTS -Djava.security.manager=allow"
+    fi
 fi
 
 if [ -z "${FLINK_ENV_JAVA_OPTS_JM}" ]; then
@@ -326,6 +364,12 @@ if [ -z "${FLINK_ENV_JAVA_OPTS_CLI}" ]; then
     FLINK_ENV_JAVA_OPTS_CLI=$(readFromConfig ${KEY_ENV_JAVA_OPTS_CLI} "${DEFAULT_ENV_JAVA_OPTS_CLI}" "${YAML_CONF}")
     # Remove leading and ending double quotes (if present) of value
     FLINK_ENV_JAVA_OPTS_CLI="$( echo "${FLINK_ENV_JAVA_OPTS_CLI}" | sed -e 's/^"//'  -e 's/"$//' )"
+fi
+
+if [ -z "${FLINK_ENV_JAVA_OPTS_SQL_GATEWAY}" ]; then
+    FLINK_ENV_JAVA_OPTS_SQL_GATEWAY=$(readFromConfig ${KEY_ENV_JAVA_OPTS_SQL_GATEWAY} "${DEFAULT_ENV_JAVA_OPTS_SQL_GATEWAY}" "${YAML_CONF}")
+    # Remove leading and ending double quotes (if present) of value
+    FLINK_ENV_JAVA_OPTS_SQL_GATEWAY="$( echo "${FLINK_ENV_JAVA_OPTS_SQL_GATEWAY}" | sed -e 's/^"//'  -e 's/"$//' )"
 fi
 
 if [ -z "${FLINK_SSH_OPTS}" ]; then

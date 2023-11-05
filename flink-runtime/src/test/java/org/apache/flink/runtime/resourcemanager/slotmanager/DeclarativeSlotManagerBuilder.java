@@ -36,38 +36,40 @@ import java.util.concurrent.Executor;
 
 /** Builder for {@link DeclarativeSlotManager}. */
 public class DeclarativeSlotManagerBuilder {
-    private SlotMatchingStrategy slotMatchingStrategy;
+    private boolean evenlySpreadOutSlots;
     private final ScheduledExecutor scheduledExecutor;
     private Time taskManagerRequestTimeout;
-    private Time slotRequestTimeout;
     private Time taskManagerTimeout;
     private boolean waitResultConsumedBeforeRelease;
     private WorkerResourceSpec defaultWorkerResourceSpec;
     private int numSlotsPerWorker;
     private SlotManagerMetricGroup slotManagerMetricGroup;
+    private int minSlotNum;
     private int maxSlotNum;
     private int redundantTaskManagerNum;
     private ResourceTracker resourceTracker;
     private SlotTracker slotTracker;
     private Duration requirementCheckDelay;
+    private Duration declareNeededResourceDelay;
 
     private DeclarativeSlotManagerBuilder(ScheduledExecutor scheduledExecutor) {
-        this.slotMatchingStrategy = AnyMatchingSlotMatchingStrategy.INSTANCE;
+        this.evenlySpreadOutSlots = false;
         this.scheduledExecutor = scheduledExecutor;
         this.taskManagerRequestTimeout = TestingUtils.infiniteTime();
-        this.slotRequestTimeout = TestingUtils.infiniteTime();
         this.taskManagerTimeout = TestingUtils.infiniteTime();
         this.waitResultConsumedBeforeRelease = true;
         this.defaultWorkerResourceSpec = WorkerResourceSpec.ZERO;
         this.numSlotsPerWorker = 1;
         this.slotManagerMetricGroup =
                 UnregisteredMetricGroups.createUnregisteredSlotManagerMetricGroup();
+        this.minSlotNum = ResourceManagerOptions.MIN_SLOT_NUM.defaultValue();
         this.maxSlotNum = ResourceManagerOptions.MAX_SLOT_NUM.defaultValue();
         this.redundantTaskManagerNum =
                 ResourceManagerOptions.REDUNDANT_TASK_MANAGER_NUM.defaultValue();
         this.resourceTracker = new DefaultResourceTracker();
         this.slotTracker = new DefaultSlotTracker();
         this.requirementCheckDelay = Duration.ZERO;
+        this.declareNeededResourceDelay = Duration.ZERO;
     }
 
     public static DeclarativeSlotManagerBuilder newBuilder(ScheduledExecutor scheduledExecutor) {
@@ -77,11 +79,6 @@ public class DeclarativeSlotManagerBuilder {
     public DeclarativeSlotManagerBuilder setTaskManagerRequestTimeout(
             Time taskManagerRequestTimeout) {
         this.taskManagerRequestTimeout = taskManagerRequestTimeout;
-        return this;
-    }
-
-    public DeclarativeSlotManagerBuilder setSlotRequestTimeout(Time slotRequestTimeout) {
-        this.slotRequestTimeout = slotRequestTimeout;
         return this;
     }
 
@@ -96,9 +93,8 @@ public class DeclarativeSlotManagerBuilder {
         return this;
     }
 
-    public DeclarativeSlotManagerBuilder setSlotMatchingStrategy(
-            SlotMatchingStrategy slotMatchingStrategy) {
-        this.slotMatchingStrategy = slotMatchingStrategy;
+    public DeclarativeSlotManagerBuilder setEvenlySpreadOutSlots(boolean evenlySpreadOutSlots) {
+        this.evenlySpreadOutSlots = evenlySpreadOutSlots;
         return this;
     }
 
@@ -116,6 +112,11 @@ public class DeclarativeSlotManagerBuilder {
     public DeclarativeSlotManagerBuilder setSlotManagerMetricGroup(
             SlotManagerMetricGroup slotManagerMetricGroup) {
         this.slotManagerMetricGroup = slotManagerMetricGroup;
+        return this;
+    }
+
+    public DeclarativeSlotManagerBuilder setMinSlotNum(int minSlotNum) {
+        this.minSlotNum = minSlotNum;
         return this;
     }
 
@@ -144,19 +145,31 @@ public class DeclarativeSlotManagerBuilder {
         return this;
     }
 
+    public DeclarativeSlotManagerBuilder setDeclareNeededResourceDelay(
+            Duration declareNeededResourceDelay) {
+        this.declareNeededResourceDelay = declareNeededResourceDelay;
+        return this;
+    }
+
     public DeclarativeSlotManager build() {
         final SlotManagerConfiguration slotManagerConfiguration =
                 new SlotManagerConfiguration(
                         taskManagerRequestTimeout,
-                        slotRequestTimeout,
                         taskManagerTimeout,
                         requirementCheckDelay,
+                        declareNeededResourceDelay,
                         waitResultConsumedBeforeRelease,
-                        slotMatchingStrategy,
+                        evenlySpreadOutSlots
+                                ? LeastUtilizationSlotMatchingStrategy.INSTANCE
+                                : AnyMatchingSlotMatchingStrategy.INSTANCE,
+                        evenlySpreadOutSlots,
                         defaultWorkerResourceSpec,
                         numSlotsPerWorker,
+                        minSlotNum,
                         maxSlotNum,
+                        new CPUResource(Double.MIN_VALUE),
                         new CPUResource(Double.MAX_VALUE),
+                        MemorySize.ZERO,
                         MemorySize.MAX_VALUE,
                         redundantTaskManagerNum);
 
@@ -170,30 +183,56 @@ public class DeclarativeSlotManagerBuilder {
 
     public DeclarativeSlotManager buildAndStartWithDirectExec() {
         return buildAndStartWithDirectExec(
-                ResourceManagerId.generate(), new TestingResourceActionsBuilder().build());
+                ResourceManagerId.generate(),
+                new TestingResourceAllocatorBuilder().build(),
+                new TestingResourceEventListenerBuilder().build());
     }
 
     public DeclarativeSlotManager buildAndStartWithDirectExec(
-            ResourceManagerId resourceManagerId, ResourceActions resourceManagerActions) {
-        return buildAndStart(resourceManagerId, Executors.directExecutor(), resourceManagerActions);
+            ResourceManagerId resourceManagerId, ResourceAllocator resourceAllocator) {
+        return buildAndStartWithDirectExec(
+                resourceManagerId,
+                resourceAllocator,
+                new TestingResourceEventListenerBuilder().build());
     }
 
-    public DeclarativeSlotManager buildAndStart(
+    public DeclarativeSlotManager buildAndStartWithDirectExec(
             ResourceManagerId resourceManagerId,
-            Executor executor,
-            ResourceActions resourceManagerActions) {
+            ResourceAllocator resourceAllocator,
+            ResourceEventListener resourceEventListener) {
         return buildAndStart(
-                resourceManagerId, executor, resourceManagerActions, resourceID -> false);
+                resourceManagerId,
+                Executors.directExecutor(),
+                resourceAllocator,
+                resourceEventListener);
     }
 
     public DeclarativeSlotManager buildAndStart(
             ResourceManagerId resourceManagerId,
             Executor executor,
-            ResourceActions resourceManagerActions,
+            ResourceAllocator resourceAllocator,
+            ResourceEventListener resourceEventListener) {
+        return buildAndStart(
+                resourceManagerId,
+                executor,
+                resourceAllocator,
+                resourceEventListener,
+                resourceID -> false);
+    }
+
+    public DeclarativeSlotManager buildAndStart(
+            ResourceManagerId resourceManagerId,
+            Executor executor,
+            ResourceAllocator resourceAllocator,
+            ResourceEventListener resourceEventListener,
             BlockedTaskManagerChecker blockedTaskManagerChecker) {
         final DeclarativeSlotManager slotManager = build();
         slotManager.start(
-                resourceManagerId, executor, resourceManagerActions, blockedTaskManagerChecker);
+                resourceManagerId,
+                executor,
+                resourceAllocator,
+                resourceEventListener,
+                blockedTaskManagerChecker);
         return slotManager;
     }
 }

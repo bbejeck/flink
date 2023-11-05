@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.api.writer;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.core.io.IOReadableWritable;
 
 import java.io.IOException;
@@ -64,11 +65,16 @@ public final class ChannelSelectorRecordWriter<T extends IOReadableWritable>
         ByteBuffer serializedRecord = serializeRecord(serializer, record);
         for (int channelIndex = 0; channelIndex < numberOfChannels; channelIndex++) {
             serializedRecord.rewind();
-            emit(record, channelIndex);
+            emit(serializedRecord, channelIndex);
         }
 
         if (flushAlways) {
             flushAll();
         }
+    }
+
+    @VisibleForTesting
+    public ChannelSelector<T> getChannelSelector() {
+        return channelSelector;
     }
 }

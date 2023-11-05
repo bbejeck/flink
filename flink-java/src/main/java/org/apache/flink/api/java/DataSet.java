@@ -105,7 +105,13 @@ import java.util.List;
  * </ul>
  *
  * @param <T> The type of the DataSet, i.e., the type of the elements of the DataSet.
+ * @deprecated All Flink DataSet APIs are deprecated since Flink 1.18 and will be removed in a
+ *     future Flink major version. You can still build your application in DataSet, but you should
+ *     move to either the DataStream and/or Table API.
+ * @see <a href="https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=158866741">
+ *     FLIP-131: Consolidate the user-facing Dataflow SDKs/APIs (and deprecate the DataSet API</a>
  */
+@Deprecated
 @Public
 public abstract class DataSet<T> {
 
@@ -1186,8 +1192,8 @@ public abstract class DataSet<T> {
      * Initiates a delta iteration. A delta iteration is similar to a regular iteration (as started
      * by {@link #iterate(int)}, but maintains state across the individual iteration steps. The
      * Solution set, which represents the current state at the beginning of each iteration can be
-     * obtained via {@link org.apache.flink.api.java.operators.DeltaIteration#getSolutionSet()} ()}.
-     * It can be be accessed by joining (or CoGrouping) with it. The DataSet that represents the
+     * obtained via {@link org.apache.flink.api.java.operators.DeltaIteration#getSolutionSet()}. It
+     * can be be accessed by joining (or CoGrouping) with it. The DataSet that represents the
      * workset of an iteration can be obtained via {@link
      * org.apache.flink.api.java.operators.DeltaIteration#getWorkset()}. The solution set is updated
      * by producing a delta for it, which is merged into the solution set at the end of each

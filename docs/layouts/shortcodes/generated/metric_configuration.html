@@ -24,7 +24,7 @@
             <td><h5>metrics.internal.query-service.thread-priority</h5></td>
             <td style="word-wrap: break-word;">1</td>
             <td>Integer</td>
-            <td>The thread priority used for Flink's internal metric query service. The thread is created by Akka's thread pool executor. The range of the priority is from 1 (MIN_PRIORITY) to 10 (MAX_PRIORITY). Warning, increasing this value may bring the main Flink components down.</td>
+            <td>The thread priority used for Flink's internal metric query service. The thread is created by Pekko's thread pool executor. The range of the priority is from 1 (MIN_PRIORITY) to 10 (MAX_PRIORITY). Warning, increasing this value may bring the main Flink components down.</td>
         </tr>
         <tr>
             <td><h5>metrics.job.status.enable</h5></td>
@@ -121,6 +121,12 @@
             <td style="word-wrap: break-word;">"&lt;host&gt;.jobmanager.&lt;job_name&gt;"</td>
             <td>String</td>
             <td>Defines the scope format string that is applied to all metrics scoped to a job on a JobManager. Only effective when a identifier-based reporter is configured</td>
+        </tr>
+        <tr>
+            <td><h5>metrics.scope.jm-operator</h5></td>
+            <td style="word-wrap: break-word;">"&lt;host&gt;.jobmanager.&lt;job_name&gt;.&lt;operator_name&gt;"</td>
+            <td>String</td>
+            <td>Defines the scope format string that is applied to all metrics scoped to the components running on a JobManager of an Operator, like OperatorCoordinator.</td>
         </tr>
         <tr>
             <td><h5>metrics.scope.operator</h5></td>

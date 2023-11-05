@@ -125,16 +125,6 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
       "SQL parse failed",
       classOf[SqlParserException])
 
-    // can't query a dim table directly
-    expectExceptionThrown(
-      "SELECT * FROM LookupTable FOR SYSTEM_TIME AS OF TIMESTAMP '2017-08-09 14:36:11'",
-      "Temporal table can only be used in temporal join and only supports " +
-        "'FOR SYSTEM_TIME AS OF' left table's time attribute field.\n" +
-        "Querying a temporal table using 'FOR SYSTEM TIME AS OF' syntax with a constant " +
-        "timestamp '2017-08-09 14:36:11' is not supported yet",
-      classOf[AssertionError]
-    )
-
     // only support left or inner join
     expectExceptionThrown(
       "SELECT * FROM MyTable AS T RIGHT JOIN LookupTable " +
@@ -150,17 +140,6 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
       "Temporal table join requires an equality condition on fields of table " +
         "[default_catalog.default_database.LookupTable].",
       classOf[TableException]
-    )
-
-    // only support "FOR SYSTEM_TIME AS OF" left table's proctime
-    expectExceptionThrown(
-      "SELECT * FROM MyTable AS T LEFT JOIN LookupTable " +
-        "FOR SYSTEM_TIME AS OF PROCTIME() AS D ON T.a = D.id",
-      "Temporal table can only be used in temporal join and only supports " +
-        "'FOR SYSTEM_TIME AS OF' left table's time attribute field.\n" +
-        "Querying a temporal table using 'FOR SYSTEM TIME AS OF' syntax with " +
-        "an expression call 'PROCTIME()' is not supported yet.",
-      classOf[AssertionError]
     )
   }
 
@@ -750,20 +729,16 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
 
   @Test
   def testJoinHintWithTableAlias(): Unit = {
-    // TODO to be supported in FLINK-28850 (to make LogicalSnapshot Hintable)
-    thrown.expectMessage(
-      "The options of following hints cannot match the name of input tables or" +
-        " views: \n`D` in `LOOKUP`")
-    thrown.expect(classOf[ValidationException])
-    val sql = "SELECT /*+ LOOKUP('table'='D') */ * FROM MyTable AS T JOIN LookupTable " +
-      "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
+    val sql =
+      "SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * FROM MyTable AS T JOIN LookupTable " +
+        "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
 
   @Test
   def testJoinHintWithTableNameOnly(): Unit = {
     val sql = "SELECT /*+ LOOKUP('table'='LookupTable') */ * FROM MyTable AS T JOIN LookupTable " +
-      "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
+      "FOR SYSTEM_TIME AS OF T.proctime ON T.a = LookupTable.id"
     util.verifyExecPlan(sql)
   }
 
@@ -772,9 +747,23 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     // only the first hint will take effect
     val sql =
       """
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'), 
-        |           LOOKUP('table'='AsyncLookupTable', 'output-mode'='ordered') */ * 
-        |FROM MyTable AS T 
+        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
+        |           LOOKUP('table'='AsyncLookupTable', 'output-mode'='ordered') */ *
+        |FROM MyTable AS T
+        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime
+        | ON T.a = AsyncLookupTable.id
+      """.stripMargin
+    util.verifyExecPlan(sql)
+  }
+
+  @Test
+  def testMultipleJoinHintsWithSameTableAlias(): Unit = {
+    // only the first hint will take effect
+    val sql =
+      """
+        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
+        |           LOOKUP('table'='D', 'output-mode'='ordered') */ *
+        |FROM MyTable AS T
         |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D 
         | ON T.a = D.id
       """.stripMargin
@@ -786,9 +775,25 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     // both hints on corresponding tables will take effect
     val sql =
       """
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'), 
-        |           LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ * 
-        |FROM MyTable AS T 
+        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered'),
+        |           LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+        |FROM MyTable AS T
+        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime
+        |  ON T.a = AsyncLookupTable.id
+        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime
+        |  ON T.a = LookupTable.id
+      """.stripMargin
+    util.verifyExecPlan(sql)
+  }
+
+  @Test
+  def testMultipleJoinHintsWithDifferentTableAlias(): Unit = {
+    // both hints on corresponding tables will take effect
+    val sql =
+      """
+        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered'),
+        |           LOOKUP('table'='D1', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */ *
+        |FROM MyTable AS T
         |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D 
         |  ON T.a = D.id
         |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D1 
@@ -800,7 +805,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @Test
   def testJoinSyncTableWithAsyncHint(): Unit = {
     val sql =
-      "SELECT /*+ LOOKUP('table'='LookupTable', 'async'='true') */ * FROM MyTable AS T JOIN LookupTable " +
+      "SELECT /*+ LOOKUP('table'='D', 'async'='true') */ * FROM MyTable AS T JOIN LookupTable " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
   }
@@ -808,7 +813,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @Test
   def testJoinAsyncTableWithAsyncHint(): Unit = {
     val sql =
-      "SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'async'='true') */ * " +
+      "SELECT /*+ LOOKUP('table'='D', 'async'='true') */ * " +
         "FROM MyTable AS T JOIN AsyncLookupTable " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
@@ -817,7 +822,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
   @Test
   def testJoinAsyncTableWithSyncHint(): Unit = {
     val sql =
-      "SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'async'='false') */ * " +
+      "SELECT /*+ LOOKUP('table'='D', 'async'='false') */ * " +
         "FROM MyTable AS T JOIN AsyncLookupTable " +
         "FOR SYSTEM_TIME AS OF T.proctime AS D ON T.a = D.id"
     util.verifyExecPlan(sql)
@@ -883,7 +888,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     stmt.addInsertSql(
       """
         |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300') */
+        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300') */
         | T.a, D.name, D.age
         |FROM MyTable T
         |JOIN AsyncLookupTable
@@ -899,7 +904,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     stmt.addInsertSql(
       """
         |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='LookupTable', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
+        |SELECT /*+ LOOKUP('table'='D', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
         | T.a, D.name, D.age
         |FROM MyTable T
         |JOIN LookupTable
@@ -915,7 +920,7 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
     stmt.addInsertSql(
       """
         |INSERT INTO Sink1
-        |SELECT /*+ LOOKUP('table'='AsyncLookupTable', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
+        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'time-out'='600s', 'capacity'='300', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='10s', 'max-attempts'='3') */
         | T.a, D.name, D.age
         |FROM MyTable T
         |JOIN AsyncLookupTable
@@ -923,6 +928,39 @@ class LookupJoinTest(legacyTableSource: Boolean) extends TableTestBase with Seri
         |""".stripMargin)
 
     util.verifyExplain(stmt, ExplainDetail.JSON_EXECUTION_PLAN)
+  }
+
+  @Test
+  def testJoinWithMixedCaseJoinHint(): Unit = {
+    util.verifyExecPlan(
+      """
+        |SELECT /*+ LookuP('table'='D', 'retry-predicate'='lookup_miss',
+        |'retry-strategy'='fixed_delay', 'fixed-delay'='155 ms', 'max-attempts'='10',
+        |'async'='true', 'output-mode'='allow_unordered','capacity'='1000', 'time-out'='300 s')
+        |*/
+        |T.a
+        |FROM MyTable AS T
+        |JOIN LookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
+        |ON T.a = D.id
+        |""".stripMargin
+    )
+  }
+
+  @Test
+  def testJoinHintWithNoPropagatingToSubQuery(): Unit = {
+    util.verifyExecPlan(
+      """
+        |SELECT /*+ LOOKUP('table'='D', 'output-mode'='ordered','capacity'='200') */ T1.a
+        |FROM (
+        |   SELECT /*+ LOOKUP('table'='D', 'output-mode'='allow_unordered', 'capacity'='1000') */
+        |     T.a a, T.proctime
+        |   FROM MyTable AS T JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T.proctime AS D
+        |     ON T.a = D.id
+        |) T1
+        |JOIN AsyncLookupTable FOR SYSTEM_TIME AS OF T1.proctime AS D
+        |ON T1.a=D.id
+        |""".stripMargin
+    )
   }
 
   // ==========================================================================================

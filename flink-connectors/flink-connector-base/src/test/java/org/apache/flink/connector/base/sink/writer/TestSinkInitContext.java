@@ -17,9 +17,11 @@
 
 package org.apache.flink.connector.base.sink.writer;
 
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.operators.ProcessingTimeService;
 import org.apache.flink.api.common.serialization.SerializationSchema;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.connector.sink2.Sink;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Gauge;
@@ -123,6 +125,11 @@ public class TestSinkInitContext implements Sink.InitContext {
     }
 
     @Override
+    public int getAttemptNumber() {
+        return 0;
+    }
+
+    @Override
     public SinkWriterMetricGroup metricGroup() {
         return metricGroup;
     }
@@ -137,6 +144,21 @@ public class TestSinkInitContext implements Sink.InitContext {
         return null;
     }
 
+    @Override
+    public boolean isObjectReuseEnabled() {
+        return false;
+    }
+
+    @Override
+    public <IN> TypeSerializer<IN> createInputSerializer() {
+        return null;
+    }
+
+    @Override
+    public JobID getJobId() {
+        return null;
+    }
+
     public TestProcessingTimeService getTestProcessingTimeService() {
         return processingTimeService;
     }
@@ -146,10 +168,10 @@ public class TestSinkInitContext implements Sink.InitContext {
     }
 
     public Counter getNumRecordsOutCounter() {
-        return metricGroup.getNumRecordsSendCounter();
+        return metricGroup.getIOMetricGroup().getNumRecordsOutCounter();
     }
 
     public Counter getNumBytesOutCounter() {
-        return metricGroup.getNumBytesSendCounter();
+        return metricGroup.getIOMetricGroup().getNumBytesOutCounter();
     }
 }

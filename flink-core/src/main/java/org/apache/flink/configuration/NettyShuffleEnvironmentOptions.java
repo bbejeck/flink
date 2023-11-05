@@ -21,12 +21,22 @@ package org.apache.flink.configuration;
 import org.apache.flink.annotation.Experimental;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.annotation.docs.Documentation;
+import org.apache.flink.configuration.description.Description;
+
+import java.time.Duration;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
+import static org.apache.flink.configuration.description.TextElement.code;
 
 /** The set of configuration options relating to network stack. */
 @PublicEvolving
 public class NettyShuffleEnvironmentOptions {
+
+    private static final String HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME =
+            "taskmanager.network.hybrid-shuffle.enable-new-mode";
+
+    private static final String HYBRID_SHUFFLE_REMOTE_STORAGE_BASE_PATH_OPTION_NAME =
+            "taskmanager.network.hybrid-shuffle.remote.path";
 
     // ------------------------------------------------------------------------
     //  Network General Options
@@ -48,12 +58,18 @@ public class NettyShuffleEnvironmentOptions {
                             "The task manager’s external port used for data exchange operations.");
 
     /** The local network port that the task manager listen at for data exchange. */
-    public static final ConfigOption<Integer> DATA_BIND_PORT =
+    @Documentation.Section({
+        Documentation.Sections.COMMON_HOST_PORT,
+        Documentation.Sections.ALL_TASK_MANAGER
+    })
+    public static final ConfigOption<String> DATA_BIND_PORT =
             key("taskmanager.data.bind-port")
-                    .intType()
+                    .stringType()
                     .noDefaultValue()
                     .withDescription(
-                            "The task manager's bind port used for data exchange operations. If not configured, '"
+                            "The task manager's bind port used for data exchange operations."
+                                    + " Also accepts a list of ports (“50100,50101”), ranges (“50100-50200”) or a combination of both."
+                                    + " If not configured, '"
                                     + DATA_PORT.key()
                                     + "' will be used.");
 
@@ -180,15 +196,43 @@ public class NettyShuffleEnvironmentOptions {
                             "The maximum number of tpc connections between taskmanagers for data communication.");
 
     /**
-     * Number of network buffers to use for each outgoing/incoming channel (subpartition/input
-     * channel). The minimum valid value that can be configured is 0. When 0 buffers-per-channel is
-     * configured, the exclusive network buffers used per downstream incoming channel will be 0, but
-     * for each upstream outgoing channel, max(1, configured value) will be used. In other words we
-     * ensure that, for performance reasons, there is at least one buffer per outgoing channel
-     * regardless of the configuration.
-     *
-     * <p>Reasoning: 1 buffer for in-flight data in the subpartition + 1 buffer for parallel
-     * serialization.
+     * The maximum number of network read buffers that are required by an input gate. (An input gate
+     * is responsible for reading data from all subtasks of an upstream task.) The number of buffers
+     * needed by an input gate is dynamically calculated in runtime, depending on various factors
+     * (e.g., the parallelism of the upstream task). Among the calculated number of needed buffers,
+     * the part below this configured value is required, while the excess part, if any, is optional.
+     * A task will fail if the required buffers cannot be obtained in runtime. A task will not fail
+     * due to not obtaining optional buffers, but may suffer a performance reduction.
+     */
+    @Experimental
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Integer> NETWORK_READ_MAX_REQUIRED_BUFFERS_PER_GATE =
+            key("taskmanager.network.memory.read-buffer.required-per-gate.max")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The maximum number of network read buffers that are required by an"
+                                    + " input gate. (An input gate is responsible for reading data"
+                                    + " from all subtasks of an upstream task.) The number of buffers"
+                                    + " needed by an input gate is dynamically calculated in runtime,"
+                                    + " depending on various factors (e.g., the parallelism of the"
+                                    + " upstream task). Among the calculated number of needed buffers,"
+                                    + " the part below this configured value is required, while the"
+                                    + " excess part, if any, is optional. A task will fail if the"
+                                    + " required buffers cannot be obtained in runtime. A task will"
+                                    + " not fail due to not obtaining optional buffers, but may"
+                                    + " suffer a performance reduction. If not explicitly configured,"
+                                    + " the default value is Integer.MAX_VALUE for streaming workloads,"
+                                    + " and 1000 for batch workloads. If explicitly configured, the"
+                                    + " configured value should be at least 1.");
+
+    /**
+     * Number of network buffers for each outgoing/incoming channel (subpartition/input channel).
+     * The minimum valid value for the option is 0. When the option is configured as 0, the
+     * exclusive network buffers used per downstream incoming channel will be 0, but for each
+     * upstream outgoing channel, max(1, configured value) will be used. In other words we ensure
+     * that, for performance reasons, at least one buffer is used per outgoing channel regardless of
+     * the configuration.
      */
     @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
     public static final ConfigOption<Integer> NETWORK_BUFFERS_PER_CHANNEL =
@@ -196,22 +240,29 @@ public class NettyShuffleEnvironmentOptions {
                     .intType()
                     .defaultValue(2)
                     .withDescription(
-                            "Number of exclusive network buffers to use for each outgoing/incoming "
-                                    + "channel (subpartition/input channel) in the credit-based flow"
-                                    + " control model. It should be configured at least 2 for good "
-                                    + "performance. 1 buffer is for receiving in-flight data in the"
-                                    + " subpartition and 1 buffer is for parallel serialization. The"
-                                    + " minimum valid value that can be configured is 0. When 0 "
-                                    + "buffers-per-channel is configured, the exclusive network "
-                                    + "buffers used per downstream incoming channel will be 0, but "
-                                    + "for each upstream outgoing channel, max(1, configured value)"
-                                    + " will be used. In other words we ensure that, for performance"
-                                    + " reasons, there is at least one buffer per outgoing channel "
-                                    + "regardless of the configuration.");
+                            String.format(
+                                    "Number of exclusive network buffers for each outgoing/incoming"
+                                            + " channel (subpartition/input channel) in the credit-based"
+                                            + " flow control model. For the outgoing channel(subpartition),"
+                                            + " this value is the effective exclusive buffers per channel."
+                                            + " For the incoming channel(input channel), this value"
+                                            + " is the max number of exclusive buffers per channel,"
+                                            + " the number of effective exclusive network buffers per"
+                                            + " channel is dynamically calculated from %s and the"
+                                            + " effective range is from 0 to the configured value."
+                                            + " The minimum valid value for the option is 0. When"
+                                            + " the option is configured as 0, the exclusive network"
+                                            + " buffers used by downstream incoming channel will be"
+                                            + " 0, but for each upstream outgoing channel, max(1,"
+                                            + " configured value) will be used. In other words, we"
+                                            + " ensure that, for performance reasons, at least one"
+                                            + " buffer is used per outgoing channel regardless of"
+                                            + " the configuration.",
+                                    NETWORK_READ_MAX_REQUIRED_BUFFERS_PER_GATE.key()));
 
     /**
-     * Number of extra network buffers to use for each outgoing/incoming gate (result
-     * partition/input gate).
+     * Number of floating network buffers for each outgoing/incoming gate (result partition/input
+     * gate).
      */
     @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
     public static final ConfigOption<Integer> NETWORK_EXTRA_BUFFERS_PER_GATE =
@@ -219,11 +270,21 @@ public class NettyShuffleEnvironmentOptions {
                     .intType()
                     .defaultValue(8)
                     .withDescription(
-                            "Number of extra network buffers to use for each outgoing/incoming gate (result partition/input gate)."
-                                    + " In credit-based flow control mode, this indicates how many floating credits are shared among all the input channels."
-                                    + " The floating buffers are distributed based on backlog (real-time output buffers in the subpartition) feedback, and can"
-                                    + " help relieve back-pressure caused by unbalanced data distribution among the subpartitions. This value should be"
-                                    + " increased in case of higher round trip times between nodes and/or larger number of machines in the cluster.");
+                            String.format(
+                                    "Number of floating network buffers for each outgoing/incoming"
+                                            + " gate (result partition/input gate). In credit-based"
+                                            + " flow control mode, this indicates how many floating"
+                                            + " credits are shared among all the channels. The floating"
+                                            + " buffers can help relieve back-pressure caused by"
+                                            + " unbalanced data distribution among the subpartitions."
+                                            + " For the outgoing gate(result partition), this value"
+                                            + " is the effective floating buffers per gate. For the"
+                                            + " incoming gate(input gate), this value is a recommended"
+                                            + " number of floating buffers, the number of effective"
+                                            + " floating network buffers per gate is dynamically"
+                                            + " calculated from %s and the range of effective floating"
+                                            + " buffers is from 0 to (parallelism - 1).",
+                                    NETWORK_READ_MAX_REQUIRED_BUFFERS_PER_GATE.key()));
 
     /**
      * Minimum number of network buffers required per blocking result partition for sort-shuffle.
@@ -270,6 +331,32 @@ public class NettyShuffleEnvironmentOptions {
                                     // this raw value must be changed correspondingly
                                     "taskmanager.memory.framework.off-heap.batch-shuffle.size"));
 
+    /** Region group size of hybrid spilled file data index. */
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Integer> HYBRID_SHUFFLE_SPILLED_INDEX_REGION_GROUP_SIZE =
+            key("taskmanager.network.hybrid-shuffle.spill-index-region-group-size")
+                    .intType()
+                    .defaultValue(1024)
+                    .withDeprecatedKeys(
+                            "taskmanager.network.hybrid-shuffle.spill-index-segment-size")
+                    .withDescription(
+                            "Controls the region group size(in bytes) of hybrid spilled file data index. "
+                                    + "Note: This option will be ignored if "
+                                    + HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME
+                                    + " is set true.");
+
+    /** Max number of hybrid retained regions in memory. */
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Long> HYBRID_SHUFFLE_NUM_RETAINED_IN_MEMORY_REGIONS_MAX =
+            key("taskmanager.network.hybrid-shuffle.num-retained-in-memory-regions-max")
+                    .longType()
+                    .defaultValue(1024 * 1024L)
+                    .withDescription(
+                            "Controls the max number of hybrid retained regions in memory. "
+                                    + "Note: This option will be ignored if "
+                                    + HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME
+                                    + " is set true. ");
+
     /** Number of max buffers can be used for each output subpartition. */
     @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
     public static final ConfigOption<Integer> NETWORK_MAX_BUFFERS_PER_CHANNEL =
@@ -300,7 +387,8 @@ public class NettyShuffleEnvironmentOptions {
                                     + " such uninterruptible action, without blocking unaligned checkpoints for long period of"
                                     + " time. Overdraft buffers are provided on best effort basis only if the system has some"
                                     + " unused buffers available. Subtask that has used overdraft buffers won't be allowed to"
-                                    + " process any more records until the overdraft buffers are returned to the pool.");
+                                    + " process any more records until the overdraft buffers are returned to the pool."
+                                    + " It should be noted that this config option only takes effect for Pipelined Shuffle.");
 
     /** The timeout for requesting exclusive buffers for each channel. */
     @Documentation.ExcludeFromDocumentation(
@@ -314,6 +402,38 @@ public class NettyShuffleEnvironmentOptions {
                                     + "the number of required buffers is not the same for local buffer pools, there may be deadlock cases that the upstream"
                                     + "tasks have occupied all the buffers and the downstream tasks are waiting for the exclusive buffers. The timeout breaks"
                                     + "the tie by failing the request of exclusive buffers and ask users to increase the number of total buffers.");
+
+    /** The option to enable the new mode of hybrid shuffle. */
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    @Experimental
+    public static final ConfigOption<Boolean> NETWORK_HYBRID_SHUFFLE_ENABLE_NEW_MODE =
+            ConfigOptions.key(HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME)
+                    .booleanType()
+                    .defaultValue(true)
+                    .withDescription(
+                            "The option is used to enable the new mode of hybrid shuffle, which has resolved existing issues in the legacy mode. First, the new mode "
+                                    + "uses less required network memory. Second, the new mode can store shuffle data in remote storage when the disk space is not "
+                                    + "enough, which could avoid insufficient disk space errors and is only supported when "
+                                    + HYBRID_SHUFFLE_REMOTE_STORAGE_BASE_PATH_OPTION_NAME
+                                    + " is configured. The new mode is currently in an experimental phase. It can be set to false to fallback to the legacy mode "
+                                    + " if something unexpected. Once the new mode reaches a stable state, the legacy mode as well as the option will be removed.");
+
+    /** The option to configure the base remote storage path for hybrid shuffle. */
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    @Experimental
+    public static final ConfigOption<String> NETWORK_HYBRID_SHUFFLE_REMOTE_STORAGE_BASE_PATH =
+            key(HYBRID_SHUFFLE_REMOTE_STORAGE_BASE_PATH_OPTION_NAME)
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The option is used to configure the base path of remote storage for hybrid shuffle. The shuffle data will be stored in "
+                                    + "remote storage when the disk space is not enough. "
+                                    + "Note: If the option is configured and "
+                                    + HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME
+                                    + " is false, this option will be ignored. "
+                                    + "If the option is not configured and "
+                                    + HYBRID_SHUFFLE_NEW_MODE_OPTION_NAME
+                                    + " is true, the remote storage will be disabled.");
 
     @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
     public static final ConfigOption<String> NETWORK_BLOCKING_SHUFFLE_TYPE =
@@ -427,6 +547,36 @@ public class NettyShuffleEnvironmentOptions {
                                     + " based on the platform. Note that the \"epoll\" mode can get better performance, less GC and have more advanced features which are"
                                     + " only available on modern Linux.");
 
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Integer> CLIENT_TCP_KEEP_IDLE_SECONDS =
+            key("taskmanager.network.netty.client.tcp.keepIdleSec")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The time (in seconds) the connection needs to remain idle before TCP starts sending keepalive probes. "
+                                    + "Note: This will not take effect when using netty transport type of nio with an older version of JDK 8, "
+                                    + "refer to https://bugs.openjdk.org/browse/JDK-8194298.");
+
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Integer> CLIENT_TCP_KEEP_INTERVAL_SECONDS =
+            key("taskmanager.network.netty.client.tcp.keepIntervalSec")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The time (in seconds) between individual keepalive probes. "
+                                    + "Note: This will not take effect when using netty transport type of nio with an older version of JDK 8, "
+                                    + "refer to https://bugs.openjdk.org/browse/JDK-8194298.");
+
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Integer> CLIENT_TCP_KEEP_COUNT =
+            key("taskmanager.network.netty.client.tcp.keepCount")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The maximum number of keepalive probes TCP should send before Netty client dropping the connection. "
+                                    + "Note: This will not take effect when using netty transport type of nio with an older version of JDK 8, "
+                                    + "refer to https://bugs.openjdk.org/browse/JDK-8194298.");
+
     // ------------------------------------------------------------------------
     //  Partition Request Options
     // ------------------------------------------------------------------------
@@ -439,7 +589,7 @@ public class NettyShuffleEnvironmentOptions {
                     .defaultValue(100)
                     .withDeprecatedKeys("taskmanager.net.request-backoff.initial")
                     .withDescription(
-                            "Minimum backoff in milliseconds for partition requests of input channels.");
+                            "Minimum backoff in milliseconds for partition requests of local input channels.");
 
     /** Maximum backoff for partition requests of input channels. */
     @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
@@ -449,7 +599,22 @@ public class NettyShuffleEnvironmentOptions {
                     .defaultValue(10000)
                     .withDeprecatedKeys("taskmanager.net.request-backoff.max")
                     .withDescription(
-                            "Maximum backoff in milliseconds for partition requests of input channels.");
+                            "Maximum backoff in milliseconds for partition requests of local input channels.");
+
+    /** The timeout for partition request listener in result partition manager. */
+    @Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
+    public static final ConfigOption<Duration> NETWORK_PARTITION_REQUEST_TIMEOUT =
+            key("taskmanager.network.partition-request-timeout")
+                    .durationType()
+                    .defaultValue(Duration.ofSeconds(10))
+                    .withDescription(
+                            Description.builder()
+                                    .text(
+                                            "Timeout for an individual partition request of remote input channels. "
+                                                    + "The partition request will finally fail if the total wait time exceeds "
+                                                    + "twice the value of %s.",
+                                            code(NETWORK_REQUEST_BACKOFF_MAX.key()))
+                                    .build());
 
     // ------------------------------------------------------------------------
 

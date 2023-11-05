@@ -36,11 +36,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.apache.flink.core.testutils.FlinkAssertions.assertThatFuture;
 import static org.apache.flink.runtime.io.network.partition.hybrid.HybridShuffleTestUtils.createTestingOutputMetrics;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link HsMemoryDataManager}. */
 class HsMemoryDataManagerTest {
@@ -54,9 +55,12 @@ class HsMemoryDataManagerTest {
 
     private Path dataFilePath;
 
+    private Path indexFilePath;
+
     @BeforeEach
     void before(@TempDir Path tempDir) {
         this.dataFilePath = tempDir.resolve(".data");
+        this.indexFilePath = tempDir.resolve(".index");
     }
 
     @Test
@@ -148,8 +152,8 @@ class HsMemoryDataManagerTest {
                     createRecord(i), targetSubpartition, Buffer.DataType.DATA_BUFFER);
         }
 
-        assertThat(spilledFuture).succeedsWithin(10, TimeUnit.SECONDS);
-        assertThat(readableFuture).succeedsWithin(10, TimeUnit.SECONDS);
+        assertThatFuture(spilledFuture).eventuallySucceeds();
+        assertThatFuture(readableFuture).eventuallySucceeds();
         assertThat(readableFuture).isCompletedWithValue(2);
         assertThat(memoryDataManager.getNumTotalUnSpillBuffers()).isEqualTo(1);
     }
@@ -193,6 +197,25 @@ class HsMemoryDataManagerTest {
     }
 
     @Test
+    void testSubpartitionConsumerRelease() throws Exception {
+        HsSpillingStrategy spillingStrategy = TestingSpillingStrategy.builder().build();
+        HsMemoryDataManager memoryDataManager = createMemoryDataManager(spillingStrategy);
+        memoryDataManager.registerNewConsumer(
+                0, HsConsumerId.DEFAULT, new TestingSubpartitionConsumerInternalOperation());
+        assertThatThrownBy(
+                        () ->
+                                memoryDataManager.registerNewConsumer(
+                                        0,
+                                        HsConsumerId.DEFAULT,
+                                        new TestingSubpartitionConsumerInternalOperation()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Each subpartition view should have unique consumerId.");
+        memoryDataManager.onConsumerReleased(0, HsConsumerId.DEFAULT);
+        memoryDataManager.registerNewConsumer(
+                0, HsConsumerId.DEFAULT, new TestingSubpartitionConsumerInternalOperation());
+    }
+
+    @Test
     void testPoolSizeCheck() throws Exception {
         final int requiredBuffers = 10;
         final int maxBuffers = 100;
@@ -217,12 +240,14 @@ class HsMemoryDataManagerTest {
         networkBufferPool.createBufferPool(maxBuffers - requiredBuffers, maxBuffers);
         assertThat(bufferPool.getNumBuffers()).isEqualTo(requiredBuffers);
 
-        assertThat(triggerGlobalDecision).succeedsWithin(10, TimeUnit.SECONDS);
+        assertThatFuture(triggerGlobalDecision).eventuallySucceeds();
     }
 
     private HsMemoryDataManager createMemoryDataManager(HsSpillingStrategy spillStrategy)
             throws Exception {
-        return createMemoryDataManager(spillStrategy, new HsFileDataIndexImpl(NUM_SUBPARTITIONS));
+        return createMemoryDataManager(
+                spillStrategy,
+                new HsFileDataIndexImpl(NUM_SUBPARTITIONS, indexFilePath, 256, Long.MAX_VALUE));
     }
 
     private HsMemoryDataManager createMemoryDataManager(
@@ -235,7 +260,9 @@ class HsMemoryDataManagerTest {
     private HsMemoryDataManager createMemoryDataManager(
             HsSpillingStrategy spillingStrategy, BufferPool bufferPool) throws Exception {
         return createMemoryDataManager(
-                bufferPool, spillingStrategy, new HsFileDataIndexImpl(NUM_SUBPARTITIONS));
+                bufferPool,
+                spillingStrategy,
+                new HsFileDataIndexImpl(NUM_SUBPARTITIONS, indexFilePath, 256, Long.MAX_VALUE));
     }
 
     private HsMemoryDataManager createMemoryDataManager(

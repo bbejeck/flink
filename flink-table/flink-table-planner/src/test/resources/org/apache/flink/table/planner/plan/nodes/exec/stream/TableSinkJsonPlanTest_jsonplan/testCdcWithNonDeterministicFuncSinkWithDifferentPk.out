@@ -30,8 +30,8 @@
           },
           "partitionKeys" : [ ],
           "options" : {
-            "connector" : "values",
-            "changelog-mode" : "I,UA,UB,D"
+            "changelog-mode" : "I,UA,UB,D",
+            "connector" : "values"
           }
         }
       }
@@ -80,6 +80,7 @@
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
       "table.exec.sink.not-null-enforcer" : "ERROR",
+      "table.exec.sink.rowtime-inserter" : "ENABLED",
       "table.exec.sink.type-length-enforcer" : "IGNORE",
       "table.exec.sink.upsert-materialize" : "AUTO"
     },
@@ -110,13 +111,20 @@
           },
           "partitionKeys" : [ ],
           "options" : {
-            "sink-insert-only" : "false",
-            "connector" : "values"
+            "connector" : "values",
+            "sink-insert-only" : "false"
           }
         }
       }
     },
     "inputChangelogMode" : [ "INSERT", "UPDATE_BEFORE", "UPDATE_AFTER", "DELETE" ],
+    "requireUpsertMaterialize" : true,
+    "state" : [ {
+      "index" : 0,
+      "ttl" : "0 ms",
+      "name" : "sinkMaterializeState"
+    } ],
+    "inputUpsertKey" : [ 0 ],
     "inputProperties" : [ {
       "requiredDistribution" : {
         "type" : "UNKNOWN"
@@ -125,8 +133,6 @@
       "priority" : 0
     } ],
     "outputType" : "ROW<`user_id` VARCHAR(2147483647) NOT NULL, `EXPR$1` VARCHAR(2147483647), `email` VARCHAR(2147483647), `balance` DECIMAL(18, 2)>",
-    "requireUpsertMaterialize" : true,
-    "inputUpsertKey" : [ 0 ],
     "description" : "Sink(table=[default_catalog.default_database.sink], fields=[user_id, EXPR$1, email, balance], upsertMaterialize=[true])"
   } ],
   "edges" : [ {

@@ -22,7 +22,8 @@ import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.runtime.state.CheckpointStateOutputStream;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.CheckpointedStateScope;
-import org.apache.flink.runtime.state.StateHandleID;
+import org.apache.flink.runtime.state.IncrementalKeyedStateHandle.HandleAndLocalPath;
+import org.apache.flink.runtime.state.StateUtil;
 import org.apache.flink.runtime.state.StreamStateHandle;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkRuntimeException;
@@ -36,11 +37,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Help class for uploading RocksDB state files. */
 public class RocksDBStateUploader extends RocksDBStateDataTransfer {
@@ -58,24 +59,29 @@ public class RocksDBStateUploader extends RocksDBStateDataTransfer {
      * @param stateScope
      * @throws Exception Thrown if can not upload all the files.
      */
-    public Map<StateHandleID, StreamStateHandle> uploadFilesToCheckpointFs(
-            @Nonnull Map<StateHandleID, Path> files,
+    public List<HandleAndLocalPath> uploadFilesToCheckpointFs(
+            @Nonnull List<Path> files,
             CheckpointStreamFactory checkpointStreamFactory,
             CheckpointedStateScope stateScope,
-            CloseableRegistry closeableRegistry)
+            CloseableRegistry closeableRegistry,
+            CloseableRegistry tmpResourcesRegistry)
             throws Exception {
 
-        Map<StateHandleID, StreamStateHandle> handles = new HashMap<>();
+        List<CompletableFuture<HandleAndLocalPath>> futures =
+                createUploadFutures(
+                        files,
+                        checkpointStreamFactory,
+                        stateScope,
+                        closeableRegistry,
+                        tmpResourcesRegistry);
 
-        Map<StateHandleID, CompletableFuture<StreamStateHandle>> futures =
-                createUploadFutures(files, checkpointStreamFactory, stateScope, closeableRegistry);
+        List<HandleAndLocalPath> handles = new ArrayList<>(files.size());
 
         try {
-            FutureUtils.waitForAll(futures.values()).get();
+            FutureUtils.waitForAll(futures).get();
 
-            for (Map.Entry<StateHandleID, CompletableFuture<StreamStateHandle>> entry :
-                    futures.entrySet()) {
-                handles.put(entry.getKey(), entry.getValue().get());
+            for (CompletableFuture<HandleAndLocalPath> future : futures) {
+                handles.add(future.get());
             }
         } catch (ExecutionException e) {
             Throwable throwable = ExceptionUtils.stripExecutionException(e);
@@ -90,34 +96,34 @@ public class RocksDBStateUploader extends RocksDBStateDataTransfer {
         return handles;
     }
 
-    private Map<StateHandleID, CompletableFuture<StreamStateHandle>> createUploadFutures(
-            Map<StateHandleID, Path> files,
+    private List<CompletableFuture<HandleAndLocalPath>> createUploadFutures(
+            List<Path> files,
             CheckpointStreamFactory checkpointStreamFactory,
             CheckpointedStateScope stateScope,
-            CloseableRegistry closeableRegistry) {
-        Map<StateHandleID, CompletableFuture<StreamStateHandle>> futures =
-                new HashMap<>(files.size());
-
-        for (Map.Entry<StateHandleID, Path> entry : files.entrySet()) {
-            final Supplier<StreamStateHandle> supplier =
-                    CheckedSupplier.unchecked(
-                            () ->
-                                    uploadLocalFileToCheckpointFs(
-                                            entry.getValue(),
-                                            checkpointStreamFactory,
-                                            stateScope,
-                                            closeableRegistry));
-            futures.put(entry.getKey(), CompletableFuture.supplyAsync(supplier, executorService));
-        }
-
-        return futures;
+            CloseableRegistry closeableRegistry,
+            CloseableRegistry tmpResourcesRegistry) {
+        return files.stream()
+                .map(
+                        e ->
+                                CompletableFuture.supplyAsync(
+                                        CheckedSupplier.unchecked(
+                                                () ->
+                                                        uploadLocalFileToCheckpointFs(
+                                                                e,
+                                                                checkpointStreamFactory,
+                                                                stateScope,
+                                                                closeableRegistry,
+                                                                tmpResourcesRegistry)),
+                                        executorService))
+                .collect(Collectors.toList());
     }
 
-    private StreamStateHandle uploadLocalFileToCheckpointFs(
+    private HandleAndLocalPath uploadLocalFileToCheckpointFs(
             Path filePath,
             CheckpointStreamFactory checkpointStreamFactory,
             CheckpointedStateScope stateScope,
-            CloseableRegistry closeableRegistry)
+            CloseableRegistry closeableRegistry,
+            CloseableRegistry tmpResourcesRegistry)
             throws IOException {
 
         InputStream inputStream = null;
@@ -142,12 +148,16 @@ public class RocksDBStateUploader extends RocksDBStateDataTransfer {
                 outputStream.write(buffer, 0, numBytes);
             }
 
-            StreamStateHandle result = null;
+            final StreamStateHandle result;
             if (closeableRegistry.unregisterCloseable(outputStream)) {
                 result = outputStream.closeAndGetHandle();
                 outputStream = null;
+            } else {
+                result = null;
             }
-            return result;
+            tmpResourcesRegistry.registerCloseable(
+                    () -> StateUtil.discardStateObjectQuietly(result));
+            return HandleAndLocalPath.of(result, filePath.getFileName().toString());
 
         } finally {
 

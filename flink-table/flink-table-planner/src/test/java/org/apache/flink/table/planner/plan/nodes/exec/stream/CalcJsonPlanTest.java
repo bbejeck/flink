@@ -114,4 +114,34 @@ public class CalcJsonPlanTest extends TableTestBase {
                         + "from MyTable where "
                         + "(udf1(a) > 0 or (a * b) < 100) and b > 10");
     }
+
+    @Test
+    public void testSarg() {
+        String sinkTableDdl =
+                "CREATE TABLE MySink (\n"
+                        + "  a bigint\n"
+                        + ") with (\n"
+                        + "  'connector' = 'values',\n"
+                        + "  'sink-insert-only' = 'false',\n"
+                        + "  'table-sink-class' = 'DEFAULT')";
+        tEnv.executeSql(sinkTableDdl);
+        String sql = "insert into MySink SELECT a from MyTable where a = 1 or a = 2 or a is null";
+        util.verifyJsonPlan(sql);
+    }
+
+    @Test
+    public void testProjectPushDown() {
+        // ensure PartitionPushDownSpec was added to exec plan
+        String sinkTableDdl =
+                "CREATE TABLE MySink (\n"
+                        + "  a int,\n"
+                        + "  b bigint,\n"
+                        + "  c varchar\n"
+                        + ") with (\n"
+                        + "  'connector' = 'values',\n"
+                        + "  'table-sink-class' = 'DEFAULT')";
+        tEnv.executeSql(sinkTableDdl);
+        util.verifyJsonPlan(
+                "insert into MySink SELECT b, a, cast(a as varchar) FROM MyTable WHERE b > 1");
+    }
 }

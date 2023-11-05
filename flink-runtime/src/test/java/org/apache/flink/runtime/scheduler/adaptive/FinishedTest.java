@@ -20,13 +20,13 @@ package org.apache.flink.runtime.scheduler.adaptive;
 
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionGraph;
+import org.apache.flink.runtime.failure.FailureEnricherUtils;
 import org.apache.flink.runtime.rest.handler.legacy.utils.ArchivedExecutionGraphBuilder;
 import org.apache.flink.util.TestLogger;
 
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertThat;
 
 /** Tests for {@link AdaptiveScheduler AdaptiveScheduler's} {@link Finished} state. */
@@ -58,7 +58,9 @@ public class FinishedTest extends TestLogger {
     @Test
     public void testGlobalFailureIgnored() {
         MockFinishedContext ctx = new MockFinishedContext();
-        createFinishedState(ctx).handleGlobalFailure(new RuntimeException());
+        createFinishedState(ctx)
+                .handleGlobalFailure(
+                        new RuntimeException(), FailureEnricherUtils.EMPTY_FAILURE_LABELS);
         assertThat(ctx.getArchivedExecutionGraph().getState(), is(testJobStatus));
     }
 
@@ -85,10 +87,6 @@ public class FinishedTest extends TestLogger {
             } else {
                 throw new AssertionError("Transitioned to onFinished twice");
             }
-        }
-
-        private void assertNoStateTransition() {
-            assertThat(archivedExecutionGraph, nullValue());
         }
 
         private ArchivedExecutionGraph getArchivedExecutionGraph() {

@@ -18,7 +18,9 @@
 
 package org.apache.flink.streaming.api.environment;
 
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.annotation.docs.Documentation;
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
@@ -28,6 +30,7 @@ import org.apache.flink.streaming.api.CheckpointingMode;
 
 import java.time.Duration;
 
+import static org.apache.flink.configuration.ConfigOptions.key;
 import static org.apache.flink.configuration.description.LinkElement.link;
 
 /**
@@ -123,6 +126,29 @@ public class ExecutionCheckpointingOptions {
                                                                     .key()))
                                             .build());
 
+    public static final ConfigOption<Duration> CHECKPOINTING_INTERVAL_DURING_BACKLOG =
+            ConfigOptions.key("execution.checkpointing.interval-during-backlog")
+                    .durationType()
+                    .noDefaultValue()
+                    .withDescription(
+                            Description.builder()
+                                    .text(
+                                            "If it is not null and any source reports isProcessingBacklog=true, "
+                                                    + "it is the interval in which checkpoints are periodically scheduled.")
+                                    .linebreak()
+                                    .linebreak()
+                                    .text(
+                                            "Checkpoint triggering may be delayed by the settings %s and %s.",
+                                            TextElement.code(MAX_CONCURRENT_CHECKPOINTS.key()),
+                                            TextElement.code(MIN_PAUSE_BETWEEN_CHECKPOINTS.key()))
+                                    .linebreak()
+                                    .linebreak()
+                                    .text(
+                                            "Note: if it is not null, the value must either be 0, "
+                                                    + "which means the checkpoint is disabled during backlog, "
+                                                    + "or be larger than or equal to execution.checkpointing.interval.")
+                                    .build());
+
     public static final ConfigOption<Duration> CHECKPOINTING_INTERVAL =
             ConfigOptions.key("execution.checkpointing.interval")
                     .durationType()
@@ -135,9 +161,11 @@ public class ExecutionCheckpointingOptions {
                                     .linebreak()
                                     .text(
                                             "This setting defines the base interval. Checkpoint triggering may be delayed by the settings "
-                                                    + "%s and %s",
+                                                    + "%s, %s and %s",
                                             TextElement.code(MAX_CONCURRENT_CHECKPOINTS.key()),
-                                            TextElement.code(MIN_PAUSE_BETWEEN_CHECKPOINTS.key()))
+                                            TextElement.code(MIN_PAUSE_BETWEEN_CHECKPOINTS.key()),
+                                            TextElement.code(
+                                                    CHECKPOINTING_INTERVAL_DURING_BACKLOG.key()))
                                     .build());
 
     public static final ConfigOption<Boolean> ENABLE_UNALIGNED =
@@ -252,4 +280,38 @@ public class ExecutionCheckpointingOptions {
                                                     "{{.Site.BaseURL}}{{.Site.LanguagePrefix}}/docs/dev/datastream/fault-tolerance/checkpointing/#checkpointing-with-parts-of-the-graph-finished-beta",
                                                     "the important considerations"))
                                     .build());
+
+    /**
+     * Access to this option is officially only supported via {@link
+     * CheckpointConfig#setForceCheckpointing(boolean)}, but there is no good reason behind this.
+     *
+     * @deprecated This will be removed once iterations properly participate in checkpointing.
+     */
+    @Internal @Deprecated @Documentation.ExcludeFromDocumentation
+    public static final ConfigOption<Boolean> FORCE_CHECKPOINTING =
+            key("execution.checkpointing.force")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Flag to force checkpointing in iterative jobs.");
+
+    /**
+     * Access to this option is officially only supported via {@link
+     * CheckpointConfig#enableApproximateLocalRecovery(boolean)}, but there is no good reason behind
+     * this.
+     */
+    @Internal @Documentation.ExcludeFromDocumentation
+    public static final ConfigOption<Boolean> APPROXIMATE_LOCAL_RECOVERY =
+            key("execution.checkpointing.approximate-local-recovery")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Flag to enable approximate local recovery.");
+
+    public static final ConfigOption<Integer> UNALIGNED_MAX_SUBTASKS_PER_CHANNEL_STATE_FILE =
+            key("execution.checkpointing.unaligned.max-subtasks-per-channel-state-file")
+                    .intType()
+                    .defaultValue(5)
+                    .withDescription(
+                            "Defines the maximum number of subtasks that share the same channel state file. "
+                                    + "It can reduce the number of small files when enable unaligned checkpoint. "
+                                    + "Each subtask will create a new channel state file when this is configured to 1.");
 }

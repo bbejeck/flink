@@ -26,12 +26,13 @@ import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.heartbeat.HeartbeatServices;
+import org.apache.flink.runtime.heartbeat.HeartbeatServicesImpl;
 import org.apache.flink.runtime.highavailability.TestingHighAvailabilityServices;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
 import org.apache.flink.runtime.jobmanager.OnCompletionActions;
 import org.apache.flink.runtime.jobmaster.utils.JobMasterBuilder;
-import org.apache.flink.runtime.leaderelection.TestingLeaderElectionService;
+import org.apache.flink.runtime.leaderelection.TestingLeaderElection;
 import org.apache.flink.runtime.leaderretrieval.SettableLeaderRetrievalService;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.rpc.TestingRpcServiceResource;
@@ -71,14 +72,12 @@ public class JobMasterExecutionDeploymentReconciliationTest extends TestLogger {
     private static final Time testingTimeout = Time.seconds(10L);
 
     private final HeartbeatServices heartbeatServices =
-            new HeartbeatServices(Integer.MAX_VALUE, Integer.MAX_VALUE);
+            new HeartbeatServicesImpl(Integer.MAX_VALUE, Integer.MAX_VALUE);
 
     private final TestingHighAvailabilityServices haServices =
             new TestingHighAvailabilityServices();
     private final SettableLeaderRetrievalService resourceManagerLeaderRetriever =
             new SettableLeaderRetrievalService();
-    private final TestingLeaderElectionService resourceManagerLeaderElectionService =
-            new TestingLeaderElectionService();
 
     @ClassRule
     public static final TestingRpcServiceResource RPC_SERVICE_RESOURCE =
@@ -91,7 +90,7 @@ public class JobMasterExecutionDeploymentReconciliationTest extends TestLogger {
     @Before
     public void setup() {
         haServices.setResourceManagerLeaderRetriever(resourceManagerLeaderRetriever);
-        haServices.setResourceManagerLeaderElectionService(resourceManagerLeaderElectionService);
+        haServices.setResourceManagerLeaderElection(new TestingLeaderElection());
         haServices.setCheckpointRecoveryFactory(new StandaloneCheckpointRecoveryFactory());
     }
 

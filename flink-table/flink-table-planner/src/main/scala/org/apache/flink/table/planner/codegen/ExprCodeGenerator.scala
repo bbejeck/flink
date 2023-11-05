@@ -41,7 +41,6 @@ import org.apache.flink.table.runtime.types.PlannerTypeUtils.isInteroperable
 import org.apache.flink.table.runtime.typeutils.TypeCheckUtils
 import org.apache.flink.table.runtime.typeutils.TypeCheckUtils.{isNumeric, isTemporal, isTimeInterval}
 import org.apache.flink.table.types.logical._
-import org.apache.flink.table.types.logical.utils.LogicalTypeChecks.{getFieldCount, isCompositeType}
 import org.apache.flink.table.typeutils.TimeIndicatorTypeInfo
 
 import org.apache.calcite.rex._
@@ -120,14 +119,6 @@ class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
         case Some(input) => fieldIndices(input)
         case _ => Array[Int]()
       }
-  }
-
-  private def fieldIndices(t: LogicalType): Array[Int] = {
-    if (isCompositeType(t)) {
-      (0 until getFieldCount(t)).toArray
-    } else {
-      Array(0)
-    }
   }
 
   /**
@@ -546,8 +537,7 @@ class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
       case MULTIPLY if isTimeInterval(resultType) =>
         val left = operands.head
         val right = operands(1)
-        requireTimeInterval(left)
-        requireNumeric(right)
+        requireNumericAndTimeInterval(left, right)
         generateBinaryArithmeticOperator(ctx, "*", resultType, left, right)
 
       case DIVIDE | DIVIDE_INTEGER if isNumeric(resultType) =>
@@ -815,7 +805,8 @@ class ExprCodeGenerator(ctx: CodeGeneratorContext, nullableInput: Boolean)
           case BuiltInFunctionDefinitions.JSON_STRING =>
             new JsonStringCallGen(call).generate(ctx, operands, resultType)
 
-          case BuiltInFunctionDefinitions.AGG_DECIMAL_PLUS =>
+          case BuiltInFunctionDefinitions.AGG_DECIMAL_PLUS |
+              BuiltInFunctionDefinitions.HIVE_AGG_DECIMAL_PLUS =>
             val left = operands.head
             val right = operands(1)
             generateBinaryArithmeticOperator(ctx, "+", resultType, left, right)

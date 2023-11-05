@@ -437,12 +437,17 @@ SqlAlterFunction SqlAlterFunction() :
 
 /**
 * Parses a show functions statement.
-* SHOW [USER] FUNCTIONS;
+* SHOW [USER] FUNCTIONS [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] (LIKE | ILIKE) pattern;
 */
 SqlShowFunctions SqlShowFunctions() :
 {
     SqlParserPos pos;
     boolean requireUser = false;
+    String prep = null;
+    SqlIdentifier databaseName = null;
+    String likeType = null;
+    SqlCharStringLiteral likeLiteral = null;
+    boolean notLike = false;
 }
 {
     <SHOW> { pos = getPos();}
@@ -450,8 +455,77 @@ SqlShowFunctions SqlShowFunctions() :
         <USER> { requireUser = true; }
     ]
     <FUNCTIONS>
+    [
+        ( <FROM> { prep = "FROM"; } | <IN> { prep = "IN"; } )
+        { pos = getPos(); }
+        databaseName = CompoundIdentifier()
+    ]
+    [
+        [
+            <NOT>
+            {
+                notLike = true;
+            }
+        ]
+        (
+            <LIKE>
+            {
+                likeType = "LIKE";
+            }
+        |
+            <ILIKE>
+            {
+                likeType = "ILIKE";
+            }
+        )
+        <QUOTED_STRING>
+        {
+            String likeCondition = SqlParserUtil.parseString(token.image);
+            likeLiteral = SqlLiteral.createCharString(likeCondition, getPos());
+        }
+    ]
     {
-        return new SqlShowFunctions(pos.plus(getPos()), requireUser);
+        return new SqlShowFunctions(pos, requireUser, prep, databaseName, likeType, likeLiteral, notLike);
+    }
+}
+
+/**
+* Parses a show functions statement.
+* SHOW PROCEDURES [ ( FROM | IN ) [catalog_name.]database_name ] [ [NOT] (LIKE | ILIKE) pattern;
+*/
+SqlShowProcedures SqlShowProcedures() :
+{
+    String prep = null;
+    SqlIdentifier databaseName = null;
+    boolean notLike = false;
+    String likeType = null;
+    SqlCharStringLiteral likeLiteral = null;
+    SqlParserPos pos;
+}
+{
+    <SHOW> <PROCEDURES>
+    { pos = getPos(); }
+    [
+        ( <FROM> { prep = "FROM"; } | <IN> { prep = "IN"; } )
+        { pos = getPos(); }
+        databaseName = CompoundIdentifier()
+    ]
+    [
+        [
+            <NOT>
+            {
+                notLike = true;
+            }
+        ]
+        ( <LIKE> { likeType = "LIKE"; }  | <ILIKE> { likeType = "ILIKE"; } )
+        <QUOTED_STRING>
+        {
+            String likeCondition = SqlParserUtil.parseString(token.image);
+            likeLiteral = SqlLiteral.createCharString(likeCondition, getPos());
+        }
+    ]
+    {
+        return new SqlShowProcedures(pos, prep, databaseName, notLike, likeType, likeLiteral);
     }
 }
 
@@ -590,23 +664,46 @@ SqlAlterTable SqlAlterTable() :
     SqlParserPos startPos;
     SqlIdentifier tableIdentifier;
     SqlIdentifier newTableIdentifier = null;
+    boolean ifExists = false;
+    boolean ifNotExists = false;
     SqlNodeList propertyList = SqlNodeList.EMPTY;
     SqlNodeList propertyKeyList = SqlNodeList.EMPTY;
     SqlNodeList partitionSpec = null;
     SqlIdentifier constraintName;
+    SqlTableConstraint constraint;
+    SqlIdentifier originColumnIdentifier;
+    SqlIdentifier newColumnIdentifier;
     AlterTableContext ctx = new AlterTableContext();
+    AlterTableAddPartitionContext addPartitionCtx = new AlterTableAddPartitionContext();
+    AlterTableDropPartitionsContext dropPartitionsCtx = new AlterTableDropPartitionsContext();
 }
 {
     <ALTER> <TABLE> { startPos = getPos(); }
+        ifExists = IfExistsOpt()
         tableIdentifier = CompoundIdentifier()
     (
+        LOOKAHEAD(2)
         <RENAME> <TO>
         newTableIdentifier = CompoundIdentifier()
         {
             return new SqlAlterTableRename(
                         startPos.plus(getPos()),
                         tableIdentifier,
-                        newTableIdentifier);
+                        newTableIdentifier,
+                        ifExists);
+        }
+    |
+        <RENAME>
+            originColumnIdentifier = CompoundIdentifier()
+        <TO>
+            newColumnIdentifier = CompoundIdentifier()
+        {
+            return new SqlAlterTableRenameColumn(
+                    startPos.plus(getPos()),
+                    tableIdentifier,
+                    originColumnIdentifier,
+                    newColumnIdentifier,
+                    ifExists);
         }
     |
         <RESET>
@@ -615,7 +712,8 @@ SqlAlterTable SqlAlterTable() :
             return new SqlAlterTableReset(
                         startPos.plus(getPos()),
                         tableIdentifier,
-                        propertyKeyList);
+                        propertyKeyList,
+                        ifExists);
         }
     |
         <SET>
@@ -624,21 +722,23 @@ SqlAlterTable SqlAlterTable() :
             return new SqlAlterTableOptions(
                         startPos.plus(getPos()),
                         tableIdentifier,
-                        propertyList);
+                        propertyList,
+                        ifExists);
         }
     |
         <ADD>
         (
-            AlterTableAddOrModify(ctx) {
-                // TODO: remove it after supports convert SqlNode to Operation,
-                // the jira link https://issues.apache.org/jira/browse/FLINK-22315
-                if (ctx.constraints.size() > 0) {
-                    return new SqlAlterTableAddConstraint(
-                                tableIdentifier,
-                                ctx.constraints.get(0),
-                                startPos.plus(getPos()));
-                }
+            AlterTableAddPartition(addPartitionCtx)
+            {
+                return new SqlAddPartitions(startPos.plus(getPos()),
+                        tableIdentifier,
+                        addPartitionCtx.ifNotExists,
+                        addPartitionCtx.partSpecs,
+                        addPartitionCtx.partProps);
             }
+        |
+        (
+            AlterTableAddOrModify(ctx)
         |
             <LPAREN>
             AlterTableAddOrModify(ctx)
@@ -653,8 +753,10 @@ SqlAlterTable SqlAlterTable() :
                         tableIdentifier,
                         new SqlNodeList(ctx.columnPositions, startPos.plus(getPos())),
                         ctx.constraints,
-                        ctx.watermark);
+                        ctx.watermark,
+                        ifExists);
         }
+        )
     |
         <MODIFY>
         (
@@ -673,17 +775,65 @@ SqlAlterTable SqlAlterTable() :
                         tableIdentifier,
                         new SqlNodeList(ctx.columnPositions, startPos.plus(getPos())),
                         ctx.constraints,
-                        ctx.watermark);
+                        ctx.watermark,
+                        ifExists);
         }
 
     |
-        <DROP> <CONSTRAINT>
-        constraintName = SimpleIdentifier() {
-            return new SqlAlterTableDropConstraint(
-                tableIdentifier,
-                constraintName,
-                startPos.plus(getPos()));
-        }
+     <DROP>
+        (
+            AlterTableDropPartitions(dropPartitionsCtx) {
+                return new SqlDropPartitions(
+                        startPos.plus(getPos()),
+                        tableIdentifier,
+                        dropPartitionsCtx.ifExists,
+                        dropPartitionsCtx.partSpecs);
+            }
+       |
+       (
+            { SqlIdentifier columnName = null; }
+            columnName = CompoundIdentifier() {
+                return new SqlAlterTableDropColumn(
+                            startPos.plus(getPos()),
+                            tableIdentifier,
+                            new SqlNodeList(
+                                Collections.singletonList(columnName),
+                                getPos()),
+                            ifExists);
+            }
+        |
+            { Pair<SqlNodeList, SqlNodeList> columnWithTypePair = null; }
+            columnWithTypePair = ParenthesizedCompoundIdentifierList() {
+                return new SqlAlterTableDropColumn(
+                            startPos.plus(getPos()),
+                            tableIdentifier,
+                            columnWithTypePair.getKey(),
+                            ifExists);
+            }
+        |
+            <PRIMARY> <KEY> {
+                return new SqlAlterTableDropPrimaryKey(
+                        startPos.plus(getPos()),
+                        tableIdentifier,
+                        ifExists);
+            }
+        |
+            <CONSTRAINT> constraintName = SimpleIdentifier() {
+                return new SqlAlterTableDropConstraint(
+                            startPos.plus(getPos()),
+                            tableIdentifier,
+                            constraintName,
+                            ifExists);
+            }
+        |
+            <WATERMARK> {
+                return new SqlAlterTableDropWatermark(
+                            startPos.plus(getPos()),
+                            tableIdentifier,
+                            ifExists);
+            }
+         )
+        )
     |
         [
             <PARTITION>
@@ -693,7 +843,7 @@ SqlAlterTable SqlAlterTable() :
         ]
         <COMPACT>
         {
-            return new SqlAlterTableCompact(startPos.plus(getPos()), tableIdentifier, partitionSpec);
+            return new SqlAlterTableCompact(startPos.plus(getPos()), tableIdentifier, partitionSpec, ifExists);
         }
     )
 }
@@ -771,7 +921,7 @@ SqlTableColumn TypedColumn(TableCreationContext context) :
     SqlDataTypeSpec type;
 }
 {
-    name = SimpleIdentifier() {pos = getPos();}
+    name = CompoundIdentifier() {pos = getPos();}
     type = ExtendedDataType()
     (
         tableColumn = MetadataColumn(context, name, type)
@@ -871,6 +1021,35 @@ SqlTableColumn RegularColumn(TableCreationContext context, SqlIdentifier name, S
     }
 }
 
+/** Parses {@code ALTER TABLE table_name ADD [IF NOT EXISTS] PARTITION partition_spec [PARTITION partition_spec][...]}. */
+void  AlterTableAddPartition(AlterTableAddPartitionContext context) :
+{
+    List<SqlNodeList> partSpecs = new ArrayList();
+    List<SqlNodeList> partProps = new ArrayList();
+    SqlNodeList partSpec;
+    SqlNodeList partProp;
+}
+{
+    context.ifNotExists = IfNotExistsOpt()
+    (
+        <PARTITION>
+        {
+            partSpec = new SqlNodeList(getPos());
+            partProp = null;
+            PartitionSpecCommaList(partSpec);
+        }
+        [ <WITH> { partProp = TableProperties(); } ]
+        {
+            partSpecs.add(partSpec);
+            partProps.add(partProp);
+        }
+    )+
+    {
+        context.partSpecs = partSpecs;
+        context.partProps = partProps;
+    }
+}
+
 /** Parses {@code ALTER TABLE table_name ADD/MODIFY [...]}. */
 void AlterTableAddOrModify(AlterTableContext context) :
 {
@@ -905,7 +1084,7 @@ void AddOrModifyColumn(AlterTableContext context) :
     [
         (
             <AFTER>
-            referencedColumn = SimpleIdentifier()
+            referencedColumn = CompoundIdentifier()
             {
                 columnPos = new SqlTableColumnPosition(
                     getPos(),
@@ -933,6 +1112,34 @@ void AddOrModifyColumn(AlterTableContext context) :
                 referencedColumn);
         }
         context.columnPositions.add(columnPos);
+    }
+}
+
+/** Parses {@code ALTER TABLE table_name DROP [IF EXISTS] PARTITION partition_spec[, PARTITION partition_spec, ...]}. */
+void  AlterTableDropPartitions(AlterTableDropPartitionsContext context) :
+{
+    List<SqlNodeList> partSpecs = new ArrayList();
+    SqlNodeList partSpec;
+}
+{
+    context.ifExists = IfExistsOpt()
+    <PARTITION>
+    {
+        partSpec = new SqlNodeList(getPos());
+        PartitionSpecCommaList(partSpec);
+        partSpecs.add(partSpec);
+    }
+    (
+        <COMMA>
+        <PARTITION>
+        {
+            partSpec = new SqlNodeList(getPos());
+            PartitionSpecCommaList(partSpec);
+            partSpecs.add(partSpec);
+        }
+    )*
+    {
+        context.partSpecs = partSpecs;
     }
 }
 
@@ -1169,17 +1376,32 @@ SqlCreate SqlCreateTable(Span s, boolean replace, boolean isTemporary) :
         <AS>
         asQuery = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY)
         {
-            return new SqlCreateTableAs(startPos.plus(getPos()),
-                tableName,
-                columnList,
-                constraints,
-                propertyList,
-                partitionColumns,
-                watermark,
-                comment,
-                asQuery,
-                isTemporary,
-                ifNotExists);
+            if (replace) {
+                return new SqlReplaceTableAs(startPos.plus(getPos()),
+                    tableName,
+                    columnList,
+                    constraints,
+                    propertyList,
+                    partitionColumns,
+                    watermark,
+                    comment,
+                    asQuery,
+                    isTemporary,
+                    ifNotExists,
+                    true);
+            } else {
+                return new SqlCreateTableAs(startPos.plus(getPos()),
+                    tableName,
+                    columnList,
+                    constraints,
+                    propertyList,
+                    partitionColumns,
+                    watermark,
+                    comment,
+                    asQuery,
+                    isTemporary,
+                    ifNotExists);
+            }
         }
     ]
     {
@@ -1275,6 +1497,77 @@ SqlDrop SqlDropTable(Span s, boolean replace, boolean isTemporary) :
 }
 
 /**
+* Parser a REPLACE TABLE AS statement
+*/
+SqlNode SqlReplaceTable() :
+{
+    SqlIdentifier tableName;
+    SqlCharStringLiteral comment = null;
+    SqlNode asQuery = null;
+    SqlNodeList propertyList = SqlNodeList.EMPTY;
+    SqlParserPos pos;
+    boolean isTemporary = false;
+    List<SqlTableConstraint> constraints = new ArrayList<SqlTableConstraint>();
+    SqlWatermark watermark = null;
+    SqlNodeList columnList = SqlNodeList.EMPTY;
+    SqlNodeList partitionColumns = SqlNodeList.EMPTY;
+    boolean ifNotExists = false;
+}
+{
+    <REPLACE>
+    [
+        <TEMPORARY> { isTemporary = true; }
+    ]
+    <TABLE>
+
+    ifNotExists = IfNotExistsOpt()
+
+    tableName = CompoundIdentifier()
+    [
+        <LPAREN> { pos = getPos(); TableCreationContext ctx = new TableCreationContext();}
+        TableColumn(ctx)
+        (
+            <COMMA> TableColumn(ctx)
+        )*
+        {
+            pos = getPos();
+            columnList = new SqlNodeList(ctx.columnList, pos);
+            constraints = ctx.constraints;
+            watermark = ctx.watermark;
+        }
+        <RPAREN>
+    ]
+    [ <COMMENT> <QUOTED_STRING> {
+        String p = SqlParserUtil.parseString(token.image);
+        comment = SqlLiteral.createCharString(p, getPos());
+    }]
+    [
+        <PARTITIONED> <BY>
+        partitionColumns = ParenthesizedSimpleIdentifierList()
+    ]
+    [
+        <WITH>
+        propertyList = TableProperties()
+    ]
+    <AS>
+    asQuery = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY)
+    {
+        return new SqlReplaceTableAs(getPos(),
+            tableName,
+            columnList,
+            constraints,
+            propertyList,
+            partitionColumns,
+            watermark,
+            comment,
+            asQuery,
+            isTemporary,
+            ifNotExists,
+            false);
+    }
+}
+
+/**
 * Parses an INSERT statement.
 */
 SqlNode RichSqlInsert() :
@@ -1283,12 +1576,14 @@ SqlNode RichSqlInsert() :
     final SqlNodeList keywordList;
     final List<SqlLiteral> extendedKeywords = new ArrayList<SqlLiteral>();
     final SqlNodeList extendedKeywordList;
-    SqlNode table;
-    SqlNodeList extendList = null;
+    final SqlIdentifier tableName;
+    SqlNode tableRef;
+    final SqlNodeList extendList;
     SqlNode source;
     final SqlNodeList partitionList = new SqlNodeList(getPos());
     SqlNodeList columnList = null;
     final Span s;
+    final Pair<SqlNodeList, SqlNodeList> p;
 }
 {
     (
@@ -1312,31 +1607,28 @@ SqlNode RichSqlInsert() :
         keywordList = new SqlNodeList(keywords, s.addAll(keywords).pos());
         extendedKeywordList = new SqlNodeList(extendedKeywords, s.addAll(extendedKeywords).pos());
     }
-    table = TableRefWithHintsOpt()
-    [
-        LOOKAHEAD(5)
-        [ <EXTEND> ]
-        extendList = ExtendList() {
-            table = extend(table, extendList);
-        }
-    ]
+    tableName = CompoundTableIdentifier()
+    ( tableRef = TableHints(tableName) | { tableRef = tableName; } )
+    [ LOOKAHEAD(5) tableRef = ExtendTable(tableRef) ]
     [
         <PARTITION> PartitionSpecCommaList(partitionList)
     ]
-    [
+    (
         LOOKAHEAD(2)
-        { final Pair<SqlNodeList, SqlNodeList> p; }
         p = ParenthesizedCompoundIdentifierList() {
             if (p.right.size() > 0) {
-                table = extend(table, p.right);
+                tableRef = extend(tableRef, p.right);
             }
             if (p.left.size() > 0) {
                 columnList = p.left;
+            } else {
+                columnList = null;
             }
         }
-    ]
+        |   { columnList = null; }
+    )
     source = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY) {
-        return new RichSqlInsert(s.end(source), keywordList, extendedKeywordList, table, source,
+        return new RichSqlInsert(s.end(source), keywordList, extendedKeywordList, tableRef, source,
             columnList, partitionList);
     }
 }
@@ -1818,6 +2110,25 @@ SqlDrop SqlDropExtended(Span s, boolean replace) :
     }
 }
 
+/** SHOW PARTITIONS table_name [PARTITION partition_spec]; */
+SqlShowPartitions SqlShowPartitions() :
+{
+    SqlParserPos pos;
+    SqlIdentifier tableIdentifier;
+    SqlNodeList partSpec = null;
+}
+{
+    <SHOW> <PARTITIONS> { pos = getPos(); }
+    tableIdentifier = CompoundIdentifier()
+    [
+        <PARTITION> {
+            partSpec = new SqlNodeList(getPos());
+            PartitionSpecCommaList(partSpec);
+        }
+    ]
+    { return new SqlShowPartitions(pos, tableIdentifier, partSpec); }
+}
+
 /**
 * Parses a load module statement.
 * LOAD MODULE module_name [WITH (property_name=property_value, ...)];
@@ -2092,12 +2403,14 @@ void ParseExplainDetail(Set<String> explainDetails):
 }
 {
     (
-        <ESTIMATED_COST> 
-        | 
-        <CHANGELOG_MODE> 
-        | 
+        <ESTIMATED_COST>
+        |
+        <CHANGELOG_MODE>
+        |
         <JSON_EXECUTION_PLAN>
-    ) 
+        |
+        <PLAN_ADVICE>
+    )
     {
         if (explainDetails.contains(token.image.toUpperCase())) {
             throw SqlUtil.newContextException(
@@ -2289,7 +2602,7 @@ SqlNodeList SimpleIdentifierCommaListWithPosition() :
 }
 {
     { s = span(); }
-    SimpleIdentifierCommaList(list) {
+    AddSimpleIdentifiers(list) {
         return new SqlNodeList(list, s.end(this));
     }
 }
@@ -2323,6 +2636,19 @@ SqlNode SqlAnalyzeTable():
 
     {
         return new SqlAnalyzeTable(s.end(this), tableName, partitionSpec, columns, allColumns);
+    }
+}
+
+/**
+* Parse a "SHOW JOBS" statement.
+*/
+SqlShowJobs SqlShowJobs() :
+{
+}
+{
+    <SHOW> <JOBS>
+    {
+        return new SqlShowJobs(getPos());
     }
 }
 
@@ -2368,5 +2694,20 @@ SqlStopJob SqlStopJob() :
     ]
     {
         return new SqlStopJob(getPos(), jobId, isWithSavepoint, isWithDrain);
+    }
+}
+
+/**
+ * Parses a TRUNCATE TABLE statement.
+ */
+SqlTruncateTable SqlTruncateTable() :
+{
+    SqlIdentifier sqlIdentifier;
+}
+{
+    <TRUNCATE> <TABLE>
+    sqlIdentifier = CompoundIdentifier()
+    {
+        return new SqlTruncateTable(getPos(), sqlIdentifier);
     }
 }

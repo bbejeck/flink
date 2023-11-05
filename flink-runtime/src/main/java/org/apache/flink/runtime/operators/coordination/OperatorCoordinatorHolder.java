@@ -19,10 +19,16 @@
 package org.apache.flink.runtime.operators.coordination;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.metrics.groups.OperatorCoordinatorMetricGroup;
+import org.apache.flink.runtime.checkpoint.CheckpointCoordinator;
 import org.apache.flink.runtime.checkpoint.OperatorCoordinatorCheckpointContext;
 import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutor;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
+import org.apache.flink.runtime.executiongraph.TaskInformation;
 import org.apache.flink.runtime.jobgraph.OperatorID;
+import org.apache.flink.runtime.metrics.groups.InternalOperatorCoordinatorMetricGroup;
+import org.apache.flink.runtime.metrics.groups.JobManagerJobMetricGroup;
 import org.apache.flink.runtime.operators.coordination.util.IncompleteFuturesTracker;
 import org.apache.flink.runtime.scheduler.GlobalFailureHandler;
 import org.apache.flink.util.ExceptionUtils;
@@ -67,7 +73,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  *       closed. Events coming after that are held back (buffered), because they belong to the epoch
  *       after the checkpoint.
  *   <li>Once all coordinators in the job have completed the checkpoint, the barriers to the sources
- *       are injected. If a coordinator receives a {@link AcknowledgeCheckpointEvent} from one of
+ *       are injected. If a coordinator receives an {@link AcknowledgeCheckpointEvent} from one of
  *       its subtasks, which denotes that the subtask has received the checkpoint barrier and
  *       completed checkpoint, the coordinator reopens the corresponding subtask gateway and sends
  *       out buffered events.
@@ -75,23 +81,6 @@ import static org.apache.flink.util.Preconditions.checkState;
  *       coordinator's perspective, these events are lost, because they were sent to a failed
  *       subtask after it's latest complete checkpoint.
  * </ul>
- *
- * Thus, events delivered from coordinators behave as follows.
- *
- * <ul>
- *   <li>If the event is generated before the coordinator completes checkpoint, it would be sent out
- *       immediately.
- *   <li>If the event is generated after the coordinator completes checkpoint, it would be
- *       temporarily buffered and not be sent out to the subtask until the coordinator received a
- *       {@link AcknowledgeCheckpointEvent} from that subtask.
- *   <li>If the event is generated after the coordinator received {@link
- *       AcknowledgeCheckpointEvent}, it would be sent out immediately.
- * </ul>
- *
- * <p>This implementation can handle concurrent checkpoints. In the behavior described above, If an
- * event is generated after the coordinator has completed multiple checkpoints, and before it
- * receives {@link AcknowledgeCheckpointEvent} about any of them, the event would be buffered until
- * the coordinator has received {@link AcknowledgeCheckpointEvent} about all of these checkpoints.
  *
  * <p><b>IMPORTANT:</b> A critical assumption is that all events from the scheduler to the Tasks are
  * transported strictly in order. Events being sent from the coordinator after the checkpoint
@@ -155,13 +144,14 @@ public class OperatorCoordinatorHolder
 
     public void lazyInitialize(
             GlobalFailureHandler globalFailureHandler,
-            ComponentMainThreadExecutor mainThreadExecutor) {
+            ComponentMainThreadExecutor mainThreadExecutor,
+            @Nullable CheckpointCoordinator checkpointCoordinator) {
 
         this.globalFailureHandler = globalFailureHandler;
         this.mainThreadExecutor = mainThreadExecutor;
+        context.lazyInitialize(globalFailureHandler, mainThreadExecutor, checkpointCoordinator);
 
-        context.lazyInitialize(globalFailureHandler, mainThreadExecutor);
-
+        context.lazyInitialize(globalFailureHandler, mainThreadExecutor, checkpointCoordinator);
         setupAllSubtaskGateways();
     }
 
@@ -480,7 +470,9 @@ public class OperatorCoordinatorHolder
             ExecutionJobVertex jobVertex,
             ClassLoader classLoader,
             CoordinatorStore coordinatorStore,
-            boolean supportsConcurrentExecutionAttempts)
+            boolean supportsConcurrentExecutionAttempts,
+            TaskInformation taskInformation,
+            JobManagerJobMetricGroup metricGroup)
             throws Exception {
 
         try (TemporaryClassLoaderContext ignored = TemporaryClassLoaderContext.of(classLoader)) {
@@ -500,7 +492,9 @@ public class OperatorCoordinatorHolder
                     jobVertex.getParallelism(),
                     jobVertex.getMaxParallelism(),
                     taskAccesses,
-                    supportsConcurrentExecutionAttempts);
+                    supportsConcurrentExecutionAttempts,
+                    taskInformation,
+                    metricGroup);
         }
     }
 
@@ -514,9 +508,16 @@ public class OperatorCoordinatorHolder
             final int operatorParallelism,
             final int operatorMaxParallelism,
             final SubtaskAccess.SubtaskAccessFactory taskAccesses,
-            final boolean supportsConcurrentExecutionAttempts)
+            final boolean supportsConcurrentExecutionAttempts,
+            final TaskInformation taskInformation,
+            final JobManagerJobMetricGroup jobManagerJobMetricGroup)
             throws Exception {
-
+        final MetricGroup parentMetricGroup =
+                jobManagerJobMetricGroup.getOrAddOperator(
+                        taskInformation.getJobVertexId(),
+                        taskInformation.getTaskName(),
+                        opId,
+                        operatorName);
         final LazyInitializedCoordinatorContext context =
                 new LazyInitializedCoordinatorContext(
                         opId,
@@ -524,7 +525,8 @@ public class OperatorCoordinatorHolder
                         userCodeClassLoader,
                         operatorParallelism,
                         coordinatorStore,
-                        supportsConcurrentExecutionAttempts);
+                        supportsConcurrentExecutionAttempts,
+                        new InternalOperatorCoordinatorMetricGroup(parentMetricGroup));
 
         final OperatorCoordinator coordinator = coordinatorProvider.create(context);
 
@@ -562,9 +564,11 @@ public class OperatorCoordinatorHolder
         private final int operatorParallelism;
         private final CoordinatorStore coordinatorStore;
         private final boolean supportsConcurrentExecutionAttempts;
+        private final OperatorCoordinatorMetricGroup metricGroup;
 
         private GlobalFailureHandler globalFailureHandler;
         private Executor schedulerExecutor;
+        @Nullable private CheckpointCoordinator checkpointCoordinator;
 
         private volatile boolean failed;
 
@@ -574,23 +578,30 @@ public class OperatorCoordinatorHolder
                 final ClassLoader userCodeClassLoader,
                 final int operatorParallelism,
                 final CoordinatorStore coordinatorStore,
-                final boolean supportsConcurrentExecutionAttempts) {
+                final boolean supportsConcurrentExecutionAttempts,
+                final OperatorCoordinatorMetricGroup metricGroup) {
             this.operatorId = checkNotNull(operatorId);
             this.operatorName = checkNotNull(operatorName);
             this.userCodeClassLoader = checkNotNull(userCodeClassLoader);
             this.operatorParallelism = operatorParallelism;
             this.coordinatorStore = checkNotNull(coordinatorStore);
             this.supportsConcurrentExecutionAttempts = supportsConcurrentExecutionAttempts;
+            this.metricGroup = checkNotNull(metricGroup);
         }
 
-        void lazyInitialize(GlobalFailureHandler globalFailureHandler, Executor schedulerExecutor) {
+        void lazyInitialize(
+                GlobalFailureHandler globalFailureHandler,
+                Executor schedulerExecutor,
+                @Nullable CheckpointCoordinator checkpointCoordinator) {
             this.globalFailureHandler = checkNotNull(globalFailureHandler);
             this.schedulerExecutor = checkNotNull(schedulerExecutor);
+            this.checkpointCoordinator = checkpointCoordinator;
         }
 
         void unInitialize() {
             this.globalFailureHandler = null;
             this.schedulerExecutor = null;
+            this.checkpointCoordinator = null;
         }
 
         boolean isInitialized() {
@@ -608,6 +619,11 @@ public class OperatorCoordinatorHolder
         @Override
         public OperatorID getOperatorId() {
             return operatorId;
+        }
+
+        @Override
+        public OperatorCoordinatorMetricGroup metricGroup() {
+            return metricGroup;
         }
 
         @Override
@@ -653,6 +669,12 @@ public class OperatorCoordinatorHolder
         @Override
         public boolean isConcurrentExecutionAttemptsSupported() {
             return supportsConcurrentExecutionAttempts;
+        }
+
+        @Override
+        @Nullable
+        public CheckpointCoordinator getCheckpointCoordinator() {
+            return checkpointCoordinator;
         }
     }
 }

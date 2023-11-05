@@ -23,15 +23,14 @@ import org.apache.flink.table.data.{GenericRowData, RowData}
 import org.apache.flink.table.data.binary.BinaryRowData
 import org.apache.flink.table.data.utils.JoinedRowData
 import org.apache.flink.table.expressions._
-import org.apache.flink.table.functions.AggregateFunction
+import org.apache.flink.table.functions.{AggregateFunction, DeclarativeAggregateFunction}
 import org.apache.flink.table.planner.codegen._
-import org.apache.flink.table.planner.codegen.CodeGenUtils.{binaryRowFieldSetAccess, binaryRowSetNull}
+import org.apache.flink.table.planner.codegen.CodeGenUtils.{binaryRowFieldSetAccess, binaryRowSetNull, getFieldExpr, getReuseRowFieldExprs}
 import org.apache.flink.table.planner.codegen.agg.batch.AggCodeGenHelper.buildAggregateArgsMapping
 import org.apache.flink.table.planner.codegen.sort.SortCodeGenerator
 import org.apache.flink.table.planner.expressions.DeclarativeExpressionResolver
 import org.apache.flink.table.planner.expressions.DeclarativeExpressionResolver.toRexInputRef
 import org.apache.flink.table.planner.expressions.converter.ExpressionConverter
-import org.apache.flink.table.planner.functions.aggfunctions.DeclarativeAggregateFunction
 import org.apache.flink.table.planner.plan.utils.{AggregateInfo, SortUtil}
 import org.apache.flink.table.runtime.generated.{NormalizedKeyComputer, RecordComparator}
 import org.apache.flink.table.runtime.operators.aggregate.BytesHashMapSpillMemorySegmentPool
@@ -186,7 +185,7 @@ object HashAggCodeGenHelper {
   }
 
   /** Generate codes which will init the empty agg buffer. */
-  private[flink] def genReusableEmptyAggBuffer(
+  def genReusableEmptyAggBuffer(
       ctx: CodeGeneratorContext,
       builder: RelBuilder,
       inputTerm: String,
@@ -199,7 +198,7 @@ object HashAggCodeGenHelper {
     val converter = new ExpressionConverter(builder)
 
     val initAuxGroupingExprs = auxGrouping.map {
-      idx => GenerateUtils.generateFieldAccess(ctx, inputType, inputTerm, idx)
+      idx => getFieldExpr(ctx, inputTerm, inputType, idx)
     }
 
     val initAggCallBufferExprs = aggInfos
@@ -335,6 +334,56 @@ object HashAggCodeGenHelper {
         new GeneratedExpression(outputTerm, "false", output, outputType)
       case _ => resultExpr
     }
+  }
+
+  def genHashAggValueExpr(
+      isMerge: Boolean,
+      isFinal: Boolean,
+      ctx: CodeGeneratorContext,
+      exprCodeGen: ExprCodeGenerator,
+      builder: RelBuilder,
+      auxGrouping: Array[Int],
+      aggInfos: Seq[AggregateInfo],
+      argsMapping: Array[Array[(Int, LogicalType)]],
+      aggBuffMapping: Array[Array[(Int, LogicalType)]],
+      inputType: RowType,
+      aggBufferTerm: String,
+      aggBufferType: RowType): Seq[GeneratedExpression] = {
+    val valueExprs = if (isFinal) {
+      val converter = new ExpressionConverter(builder)
+
+      val bindRefOffset = inputType.getFieldCount
+      val getAuxGroupingExprs = auxGrouping.indices
+        .map {
+          idx =>
+            val (_, resultType) = aggBuffMapping(idx)(0)
+            toRexInputRef(builder, bindRefOffset + idx, resultType)
+        }
+
+      val getAggValueExprs = aggInfos.map {
+        aggInfo =>
+          val aggBufferIdx = auxGrouping.length + aggInfo.aggIndex
+          val function = aggInfo.function.asInstanceOf[DeclarativeAggregateFunction]
+          val ref = ResolveReference(
+            ctx,
+            builder,
+            isMerge,
+            bindRefOffset,
+            function,
+            aggBufferIdx,
+            argsMapping,
+            aggBuffMapping)
+          function.getValueExpression
+            .accept(ref)
+      }
+
+      (getAuxGroupingExprs ++ getAggValueExprs)
+        .map(_.accept(converter))
+        .map(exprCodeGen.generateExpression)
+    } else {
+      getReuseRowFieldExprs(ctx, aggBufferType, aggBufferTerm)
+    }
+    valueExprs
   }
 
   /**
@@ -480,14 +529,18 @@ object HashAggCodeGenHelper {
           function.accumulateExpressions
             .map(_.accept(ref))
             .map {
-              e => (exprCodeGen.generateExpression(e.accept(converter)), aggInfo.agg.filterArg)
+              e =>
+                (
+                  exprCodeGen.generateExpression(e.accept(converter)),
+                  aggInfo.agg.hasFilter,
+                  aggInfo.agg.filterArg)
             }
       }
 
     // update agg buff in-place
     val code = accumulateExprsWithFilterArgs.zipWithIndex
       .map {
-        case ((accumulateExpr, filterArg), index) =>
+        case ((accumulateExpr, hashFilter, filterArg), index) =>
           val idx = auxGrouping.length + index
           val t = aggBufferType.getTypeAt(idx)
           val writeCode =
@@ -502,10 +555,11 @@ object HashAggCodeGenHelper {
                |}
                |""".stripMargin.trim
 
-          if (filterArg >= 0) {
-            val filterTerm =
-              s"!$inputTerm.isNullAt($filterArg) && $inputTerm.getBoolean($filterArg)"
+          if (hashFilter) {
+            val expr = getFieldExpr(ctx, inputTerm, inputType, filterArg)
+            val filterTerm = s"!${expr.nullTerm} && ${expr.resultTerm}"
             s"""
+               |${expr.code}
                |if ($filterTerm) {
                | $innerCode
                |}
@@ -580,13 +634,17 @@ object HashAggCodeGenHelper {
       aggregateMapTerm: String,
       aggMapKVTypesTerm: (String, String),
       aggMapKVRowType: (RowType, RowType),
+      aggBufferPrefix: String,
       aggBufferNames: Array[Array[String]],
       aggBufferTypes: Array[Array[LogicalType]],
       outputTerm: String,
       outputType: RowType,
       outputResultFromMap: String,
       sorterTerm: String,
-      retryAppend: String): (String, String) = {
+      retryAppend: String,
+      maxNumFileHandles: Int,
+      compressionEnabled: Boolean,
+      compressionBlockSize: Int): (String, String) = {
     val (grouping, auxGrouping) = groupingAndAuxGrouping
     if (isFinal) {
       val logMapSpilling =
@@ -604,7 +662,10 @@ object HashAggCodeGenHelper {
         groupKeyRowType,
         groupKeyTypesTerm,
         aggBufferTypesTerm,
-        sorterTerm)
+        sorterTerm,
+        maxNumFileHandles,
+        compressionEnabled,
+        compressionBlockSize)
       val fallbackToSortAggCode = genFallbackToSortAgg(
         ctx,
         builder,
@@ -618,6 +679,7 @@ object HashAggCodeGenHelper {
         sorterTerm,
         outputTerm,
         outputType,
+        aggBufferPrefix,
         aggBufferNames,
         aggBufferTypes
       )
@@ -712,7 +774,10 @@ object HashAggCodeGenHelper {
       groupKeyRowType: RowType,
       groupKeyTypesTerm: String,
       aggBufferTypesTerm: String,
-      sorterTerm: String): String = {
+      sorterTerm: String,
+      maxNumFileHandles: Int,
+      compressionEnabled: Boolean,
+      compressionBlockSize: Int): String = {
     val keyComputerTerm = CodeGenUtils.newName("keyComputer")
     val recordComparatorTerm = CodeGenUtils.newName("recordComparator")
     val prepareSorterCode =
@@ -728,7 +793,7 @@ object HashAggCodeGenHelper {
        |    new $binaryRowSerializerTypeTerm($aggBufferTypesTerm.length),
        |    $keyComputerTerm, $recordComparatorTerm,
        |    getContainingTask().getEnvironment().getMemoryManager().getPageSize(),
-       |    getContainingTask().getJobConfiguration()
+       |    $maxNumFileHandles, $compressionEnabled, $compressionBlockSize
        |  );
        """.stripMargin
   }
@@ -746,6 +811,7 @@ object HashAggCodeGenHelper {
       sorterTerm: String,
       outputTerm: String,
       outputType: RowType,
+      aggBufferPrefix: String,
       aggBufferNames: Array[Array[String]],
       aggBufferTypes: Array[Array[LogicalType]]): String = {
     val (groupKeyRowType, aggBufferRowType) = mapKVRowTypes
@@ -770,6 +836,7 @@ object HashAggCodeGenHelper {
       functionIdentifiers,
       fallbackInputTerm,
       fallbackInputType,
+      aggBufferPrefix,
       aggBufferNames,
       aggBufferTypes,
       outputType,

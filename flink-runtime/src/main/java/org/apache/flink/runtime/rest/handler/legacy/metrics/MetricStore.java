@@ -23,6 +23,7 @@ import org.apache.flink.runtime.messages.webmonitor.JobDetails;
 import org.apache.flink.runtime.messages.webmonitor.JobDetails.CurrentAttempts;
 import org.apache.flink.runtime.metrics.dump.MetricDump;
 import org.apache.flink.runtime.metrics.dump.QueryScopeInfo;
+import org.apache.flink.util.CollectionUtil;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,7 @@ import static org.apache.flink.runtime.metrics.dump.MetricDump.METRIC_CATEGORY_G
 import static org.apache.flink.runtime.metrics.dump.MetricDump.METRIC_CATEGORY_HISTOGRAM;
 import static org.apache.flink.runtime.metrics.dump.MetricDump.METRIC_CATEGORY_METER;
 import static org.apache.flink.runtime.metrics.dump.QueryScopeInfo.INFO_CATEGORY_JM;
+import static org.apache.flink.runtime.metrics.dump.QueryScopeInfo.INFO_CATEGORY_JM_OPERATOR;
 import static org.apache.flink.runtime.metrics.dump.QueryScopeInfo.INFO_CATEGORY_JOB;
 import static org.apache.flink.runtime.metrics.dump.QueryScopeInfo.INFO_CATEGORY_OPERATOR;
 import static org.apache.flink.runtime.metrics.dump.QueryScopeInfo.INFO_CATEGORY_TASK;
@@ -94,22 +96,39 @@ public class MetricStore {
                     job.getCurrentExecutionAttempts();
             Map<String, Map<Integer, Integer>> jobRepresentativeAttempts =
                     representativeAttempts.compute(
-                            jobId, (k, overwritten) -> new HashMap<>(currentAttempts.size()));
+                            jobId,
+                            (k, overwritten) ->
+                                    CollectionUtil.newHashMapWithExpectedSize(
+                                            currentAttempts.size()));
             currentAttempts.forEach(
                     (vertexId, subtaskAttempts) -> {
                         Map<Integer, Integer> vertexAttempts =
                                 jobRepresentativeAttempts.compute(
                                         vertexId, (k, overwritten) -> new HashMap<>());
-                        TaskMetricStore taskMetricStore = getTaskMetricStore(jobId, vertexId);
+                        Optional<TaskMetricStore> taskMetricStoreOptional =
+                                Optional.ofNullable(this.jobs.get(jobId))
+                                        .map(map -> map.getTaskMetricStore(vertexId));
+
+                        // Retains current active subtasks to accommodate dynamic scaling
+                        taskMetricStoreOptional.ifPresent(
+                                taskMetricStore ->
+                                        taskMetricStore.retainSubtasks(subtaskAttempts.keySet()));
+
                         subtaskAttempts.forEach(
                                 (subtaskIndex, attempts) -> {
                                     // Updates representative attempts
                                     vertexAttempts.put(
                                             subtaskIndex, attempts.getRepresentativeAttempt());
                                     // Retains current attempt metrics to avoid memory leak
-                                    taskMetricStore
-                                            .getSubtaskMetricStore(subtaskIndex)
-                                            .retainAttempts(attempts.getCurrentAttempts());
+                                    taskMetricStoreOptional
+                                            .map(
+                                                    taskMetricStore ->
+                                                            taskMetricStore.getSubtaskMetricStore(
+                                                                    subtaskIndex))
+                                            .ifPresent(
+                                                    subtaskMetricStore ->
+                                                            subtaskMetricStore.retainAttempts(
+                                                                    attempts.getCurrentAttempts()));
                                 });
                     });
         }
@@ -243,6 +262,7 @@ public class MetricStore {
             TaskMetricStore task;
             SubtaskMetricStore subtask;
             ComponentMetricStore attempt;
+            ComponentMetricStore jmOperator;
             boolean isRepresentativeAttempt;
 
             String name = info.scope.isEmpty() ? metric.name : info.scope + "." + metric.name;
@@ -350,6 +370,18 @@ public class MetricStore {
                                         + name,
                                 metric);
                     }
+                    break;
+                case INFO_CATEGORY_JM_OPERATOR:
+                    QueryScopeInfo.JobManagerOperatorQueryScopeInfo jmOperatorInfo =
+                            (QueryScopeInfo.JobManagerOperatorQueryScopeInfo) info;
+                    job = jobs.computeIfAbsent(jmOperatorInfo.jobID, k -> new JobMetricStore());
+                    task =
+                            job.tasks.computeIfAbsent(
+                                    jmOperatorInfo.vertexID, k -> new TaskMetricStore());
+                    jmOperator =
+                            task.jmOperators.computeIfAbsent(
+                                    jmOperatorInfo.operatorName, k -> new ComponentMetricStore());
+                    addMetric(jmOperator.metrics, name, metric);
                     break;
                 default:
                     LOG.debug("Invalid metric dump category: " + info.getCategory());
@@ -479,15 +511,19 @@ public class MetricStore {
     @ThreadSafe
     public static class TaskMetricStore extends ComponentMetricStore {
         private final Map<Integer, SubtaskMetricStore> subtasks;
+        private final Map<String, ComponentMetricStore> jmOperators;
 
         private TaskMetricStore() {
-            this(new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
+            this(new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
         }
 
         private TaskMetricStore(
-                Map<String, String> metrics, Map<Integer, SubtaskMetricStore> subtasks) {
+                Map<String, String> metrics,
+                Map<Integer, SubtaskMetricStore> subtasks,
+                Map<String, ComponentMetricStore> jmOperators) {
             super(metrics);
             this.subtasks = checkNotNull(subtasks);
+            this.jmOperators = checkNotNull(jmOperators);
         }
 
         public SubtaskMetricStore getSubtaskMetricStore(int subtaskIndex) {
@@ -498,12 +534,35 @@ public class MetricStore {
             return unmodifiableMap(subtasks);
         }
 
+        void retainSubtasks(Set<Integer> activeSubtasks) {
+            // Retain metrics of pattern subtaskIndex.metricName which are directly stored in
+            // TaskMetricStore
+            metrics.keySet()
+                    .removeIf(
+                            key -> {
+                                // To prevent errors in metric parsing, here we only
+                                // clean up metrics with a pattern of
+                                // "subtaskIndex.metricName"
+                                String index = key.substring(0, Math.max(key.indexOf('.'), 0));
+                                return index.matches("\\d+")
+                                        && !activeSubtasks.contains(Integer.parseInt(index));
+                            });
+
+            subtasks.keySet().retainAll(activeSubtasks);
+        }
+
+        public ComponentMetricStore getJobManagerOperatorMetricStores(String operatorName) {
+            return jmOperators.get(operatorName);
+        }
+
         private static TaskMetricStore unmodifiable(TaskMetricStore source) {
             if (source == null) {
                 return null;
             }
             return new TaskMetricStore(
-                    unmodifiableMap(source.metrics), unmodifiableMap(source.subtasks));
+                    unmodifiableMap(source.metrics),
+                    unmodifiableMap(source.subtasks),
+                    unmodifiableMap(source.jmOperators));
         }
     }
 

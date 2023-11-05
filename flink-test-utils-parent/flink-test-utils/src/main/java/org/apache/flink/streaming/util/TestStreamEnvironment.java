@@ -18,6 +18,7 @@
 
 package org.apache.flink.streaming.util;
 
+import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.configuration.StateChangelogOptions;
@@ -114,10 +115,11 @@ public class TestStreamEnvironment extends StreamExecutionEnvironment {
             randomize(conf, ExecutionCheckpointingOptions.ENABLE_UNALIGNED, true, false);
             randomize(
                     conf,
-                    ExecutionCheckpointingOptions.ALIGNMENT_TIMEOUT,
+                    ExecutionCheckpointingOptions.ALIGNED_CHECKPOINT_TIMEOUT,
                     Duration.ofSeconds(0),
                     Duration.ofMillis(100),
                     Duration.ofSeconds(2));
+            randomize(conf, CheckpointingOptions.CLEANER_PARALLEL_MODE, true, false);
         }
 
         // randomize ITTests for enabling state change log

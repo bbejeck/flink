@@ -25,15 +25,14 @@ import org.apache.flink.configuration.DelegatingConfiguration;
 import org.apache.flink.configuration.MetricOptions;
 import org.apache.flink.core.plugin.PluginManager;
 import org.apache.flink.metrics.MetricConfig;
-import org.apache.flink.metrics.reporter.InstantiateViaFactory;
-import org.apache.flink.metrics.reporter.InterceptInstantiationViaReflection;
 import org.apache.flink.metrics.reporter.MetricReporter;
 import org.apache.flink.metrics.reporter.MetricReporterFactory;
 import org.apache.flink.runtime.metrics.filter.DefaultMetricFilter;
 import org.apache.flink.runtime.metrics.filter.MetricFilter;
 import org.apache.flink.runtime.metrics.scope.ScopeFormat;
+import org.apache.flink.util.CollectionUtil;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Iterators;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Iterators;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,7 +42,6 @@ import javax.annotation.Nullable;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -266,7 +264,8 @@ public final class ReporterSetup {
 
     private static Map<String, MetricReporterFactory> loadAvailableReporterFactories(
             @Nullable PluginManager pluginManager) {
-        final Map<String, MetricReporterFactory> reporterFactories = new HashMap<>(2);
+        final Map<String, MetricReporterFactory> reporterFactories =
+                CollectionUtil.newHashMapWithExpectedSize(2);
         final Iterator<MetricReporterFactory> factoryIterator =
                 getAllReporterFactories(pluginManager);
         // do not use streams or for-each loops here because they do not allow catching individual
@@ -365,8 +364,7 @@ public final class ReporterSetup {
     private static Optional<MetricReporter> loadReporter(
             final String reporterName,
             final Configuration reporterConfig,
-            final Map<String, MetricReporterFactory> reporterFactories)
-            throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+            final Map<String, MetricReporterFactory> reporterFactories) {
 
         final String reporterClassName = reporterConfig.get(MetricOptions.REPORTER_CLASS);
         final String factoryClassName = reporterConfig.get(MetricOptions.REPORTER_FACTORY_CLASS);
@@ -378,40 +376,16 @@ public final class ReporterSetup {
 
         if (reporterClassName != null) {
             LOG.warn(
-                    "The reporter configuration of '{}' configures the reporter class, which is a deprecated approach to configure reporters."
-                            + " Please configure a factory class instead: '{}{}.{}: <factoryClass>' to ensure that the configuration"
-                            + " continues to work with future versions.",
+                    "The reporter configuration of '{}' configures the reporter class, which is no a no longer supported approach to configure reporters."
+                            + " Please configure a factory class instead: '{}{}.{}: <factoryClass>'.",
                     reporterName,
                     ConfigConstants.METRICS_REPORTER_PREFIX,
                     reporterName,
                     MetricOptions.REPORTER_FACTORY_CLASS.key());
-
-            final Optional<MetricReporterFactory> interceptingFactory =
-                    reporterFactories.values().stream()
-                            .filter(
-                                    factory -> {
-                                        InterceptInstantiationViaReflection annotation =
-                                                factory.getClass()
-                                                        .getAnnotation(
-                                                                InterceptInstantiationViaReflection
-                                                                        .class);
-                                        return annotation != null
-                                                && annotation
-                                                        .reporterClassName()
-                                                        .equals(reporterClassName);
-                                    })
-                            .findAny();
-
-            if (interceptingFactory.isPresent()) {
-                return loadViaFactory(reporterConfig, interceptingFactory.get());
-            }
-
-            return loadViaReflection(
-                    reporterClassName, reporterName, reporterConfig, reporterFactories);
         }
 
         LOG.warn(
-                "No reporter class nor factory set for reporter {}. Metrics might not be exposed/reported.",
+                "No reporter factory set for reporter {}. Metrics might not be exposed/reported.",
                 reporterName);
         return Optional.empty();
     }
@@ -443,27 +417,5 @@ public final class ReporterSetup {
         reporterConfig.addAllToProperties(metricConfig);
 
         return Optional.of(factory.createMetricReporter(metricConfig));
-    }
-
-    @SuppressWarnings("deprecation")
-    private static Optional<MetricReporter> loadViaReflection(
-            final String reporterClassName,
-            final String reporterName,
-            final Configuration reporterConfig,
-            final Map<String, MetricReporterFactory> reporterFactories)
-            throws ClassNotFoundException, IllegalAccessException, InstantiationException {
-
-        final Class<?> reporterClass = Class.forName(reporterClassName);
-
-        final InstantiateViaFactory alternativeFactoryAnnotation =
-                reporterClass.getAnnotation(InstantiateViaFactory.class);
-        if (alternativeFactoryAnnotation != null) {
-            final String alternativeFactoryClassName =
-                    alternativeFactoryAnnotation.factoryClassName();
-            return loadViaFactory(
-                    alternativeFactoryClassName, reporterName, reporterConfig, reporterFactories);
-        }
-
-        return Optional.of((MetricReporter) reporterClass.newInstance());
     }
 }

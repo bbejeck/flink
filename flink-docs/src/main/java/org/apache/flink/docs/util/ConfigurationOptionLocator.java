@@ -19,6 +19,7 @@
 package org.apache.flink.docs.util;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.annotation.docs.Documentation;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.util.function.BiConsumerWithException;
 
@@ -73,15 +74,6 @@ public class ConfigurationOptionLocator {
                 new OptionsClassLocation("flink-clients", "org.apache.flink.client.cli"),
                 new OptionsClassLocation(
                         "flink-table/flink-sql-client", "org.apache.flink.table.client.config"),
-                new OptionsClassLocation(
-                        "flink-connectors/flink-connector-pulsar",
-                        "org.apache.flink.connector.pulsar.common.config"),
-                new OptionsClassLocation(
-                        "flink-connectors/flink-connector-pulsar",
-                        "org.apache.flink.connector.pulsar.source"),
-                new OptionsClassLocation(
-                        "flink-connectors/flink-connector-pulsar",
-                        "org.apache.flink.connector.pulsar.sink"),
                 new OptionsClassLocation(
                         "flink-libraries/flink-cep", "org.apache.flink.cep.configuration"),
                 new OptionsClassLocation(
@@ -170,12 +162,19 @@ public class ConfigurationOptionLocator {
 
                     if (!EXCLUSIONS.contains(className)) {
                         Class<?> optionsClass = Class.forName(className);
-                        optionClasses.add(optionsClass);
+                        if (shouldBeDocumented(optionsClass)) {
+                            optionClasses.add(optionsClass);
+                        }
                     }
                 }
             }
         }
         return optionClasses;
+    }
+
+    private static boolean shouldBeDocumented(Class<?> clazz) {
+        return clazz.getAnnotation(Deprecated.class) == null
+                && clazz.getAnnotation(Documentation.ExcludeFromDocumentation.class) == null;
     }
 
     @VisibleForTesting

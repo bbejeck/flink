@@ -36,7 +36,6 @@ Was expecting one of:
     <EOF>
     "WITH" ...
     ";" ...
-
 !error
 
 create database my.db;
@@ -88,6 +87,11 @@ drop catalog default_catalog;
 [INFO] Execute statement succeed.
 !info
 
+drop catalog c1;
+[ERROR] Could not execute SQL statement. Reason:
+org.apache.flink.table.catalog.exceptions.CatalogException: Cannot drop a catalog which is currently in use.
+!error
+
 # ==========================================================================
 # test database
 # ==========================================================================
@@ -100,8 +104,8 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
+|       default |
 +---------------+
 2 rows in set
 !ok
@@ -142,9 +146,9 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
 |           db2 |
+|       default |
 +---------------+
 3 rows in set
 !ok
@@ -157,8 +161,8 @@ show databases;
 +---------------+
 | database name |
 +---------------+
-|       default |
 |           db1 |
+|       default |
 +---------------+
 2 rows in set
 !ok
@@ -180,6 +184,16 @@ use `default`;
 !info
 
 drop database `default`;
+[ERROR] Could not execute SQL statement. Reason:
+org.apache.flink.table.api.ValidationException: Cannot drop a database which is currently in use.
+!error
+
+drop catalog `mod`;
+[ERROR] Could not execute SQL statement. Reason:
+org.apache.flink.table.catalog.exceptions.CatalogException: Cannot drop a catalog which is currently in use.
+!error
+
+use catalog `c1`;
 [INFO] Execute statement succeed.
 !info
 
@@ -187,104 +201,23 @@ drop catalog `mod`;
 [INFO] Execute statement succeed.
 !info
 
-# ==========================================================================
-# test hive catalog
-# ==========================================================================
-
-create catalog hivecatalog with (
- 'type' = 'hive-test',
- 'hive-version' = '2.3.4'
-);
-[INFO] Execute statement succeed.
-!info
-
-use catalog hivecatalog;
-[INFO] Execute statement succeed.
-!info
-
-show current catalog;
-+----------------------+
-| current catalog name |
-+----------------------+
-|          hivecatalog |
-+----------------------+
-1 row in set
-!ok
-
-show databases;
-+--------------------------+
-|            database name |
-+--------------------------+
-| additional_test_database |
-|                  default |
-+--------------------------+
-2 rows in set
-!ok
-
-show tables;
-+-------------------+
-|        table name |
-+-------------------+
-| param_types_table |
-+-------------------+
-1 row in set
-!ok
-
-use additional_test_database;
-[INFO] Execute statement succeed.
-!info
-
-show tables;
-+------------+
-| table name |
-+------------+
-| test_table |
-+------------+
-1 row in set
-!ok
-
-show current database;
-+--------------------------+
-|    current database name |
-+--------------------------+
-| additional_test_database |
-+--------------------------+
-1 row in set
-!ok
-
-# ==========================================================================
-# test hive table with parameterized types
-# ==========================================================================
-
-describe hivecatalog.`default`.param_types_table;
-+------+-----------------+------+-----+--------+-----------+
-| name |            type | null | key | extras | watermark |
-+------+-----------------+------+-----+--------+-----------+
-|  dec | DECIMAL(10, 10) | TRUE |     |        |           |
-|   ch |         CHAR(5) | TRUE |     |        |           |
-|  vch |     VARCHAR(15) | TRUE |     |        |           |
-+------+-----------------+------+-----+--------+-----------+
-3 rows in set
-!ok
-
 SET 'execution.runtime-mode' = 'batch';
-[INFO] Session property has been set.
+[INFO] Execute statement succeed.
 !info
 
 SET 'sql-client.execution.result-mode' = 'tableau';
-[INFO] Session property has been set.
+[INFO] Execute statement succeed.
 !info
-
-# test the SELECT query can run successfully, even result is empty
-select * from hivecatalog.`default`.param_types_table;
-Empty set
-!ok
 
 # ==========================================================================
 # test create/drop table with catalog
 # ==========================================================================
 
-use catalog hivecatalog;
+create catalog c2 with ('type'='generic_in_memory');
+[INFO] Execute statement succeed.
+!info
+
+use catalog `c2`;
 [INFO] Execute statement succeed.
 !info
 
@@ -301,11 +234,10 @@ show tables;
 +------------+
 | table name |
 +------------+
-|   mytable1 |
-|   mytable2 |
-| test_table |
+|   MyTable1 |
+|   MyTable2 |
 +------------+
-3 rows in set
+2 rows in set
 !ok
 
 show views;
@@ -324,8 +256,8 @@ show views;
 +-----------+
 | view name |
 +-----------+
-|   myview1 |
-|   myview2 |
+|   MyView1 |
+|   MyView2 |
 +-----------+
 2 rows in set
 !ok
@@ -487,7 +419,7 @@ show views;
 # ==========================================================================
 
 SET 'sql-client.execution.result-mode' = 'changelog';
-[INFO] Session property has been set.
+[INFO] Execute statement succeed.
 !info
 
 create table MyTable7 (a int, b string) with ('connector' = 'values');
@@ -506,7 +438,7 @@ show tables;
 !ok
 
 reset;
-[INFO] All session properties have been set to their default values.
+[INFO] Execute statement succeed.
 !info
 
 drop table MyTable5;

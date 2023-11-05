@@ -58,6 +58,7 @@ import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.runtime.taskmanager.CheckpointResponder;
 import org.apache.flink.runtime.util.LongArrayList;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
+import org.apache.flink.streaming.runtime.tasks.StreamTaskCancellationContext;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -169,6 +170,7 @@ public class StateInitializationContextImplTest {
                         new JobID(),
                         createExecutionAttemptId(),
                         new TestTaskLocalStateStore(),
+                        null,
                         new InMemoryStateChangelogStorage(),
                         new TaskExecutorStateChangelogStoragesManager(),
                         jobManagerTaskRestore,
@@ -191,7 +193,8 @@ public class StateInitializationContextImplTest {
                                     ClassLoader userClassloader,
                                     KeyContext keyContext,
                                     ProcessingTimeService processingTimeService,
-                                    Iterable<KeyGroupStatePartitionStreamProvider> rawKeyedStates)
+                                    Iterable<KeyGroupStatePartitionStreamProvider> rawKeyedStates,
+                                    StreamTaskCancellationContext cancellationContext)
                                     throws Exception {
                                 // We do not initialize a timer service manager here, because it
                                 // would already consume the raw keyed
@@ -200,7 +203,8 @@ public class StateInitializationContextImplTest {
                                 // stream.
                                 return null;
                             }
-                        });
+                        },
+                        StreamTaskCancellationContext.alwaysRunning());
 
         AbstractStreamOperator<?> mockOperator = mock(AbstractStreamOperator.class);
         when(mockOperator.getOperatorID()).thenReturn(operatorID);

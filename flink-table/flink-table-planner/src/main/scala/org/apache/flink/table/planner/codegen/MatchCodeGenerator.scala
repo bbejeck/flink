@@ -17,7 +17,7 @@
  */
 package org.apache.flink.table.planner.codegen
 
-import org.apache.flink.api.common.functions.Function
+import org.apache.flink.api.common.functions.{Function, OpenContext}
 import org.apache.flink.cep.functions.PatternProcessFunction
 import org.apache.flink.cep.pattern.conditions.{IterativeCondition, RichIterativeCondition}
 import org.apache.flink.configuration.Configuration
@@ -46,6 +46,7 @@ import _root_.scala.collection.JavaConversions._
 import _root_.scala.collection.JavaConverters._
 import _root_.scala.collection.mutable
 import org.apache.calcite.rel.`type`.RelDataType
+import org.apache.calcite.rel.RelCollations
 import org.apache.calcite.rel.core.AggregateCall
 import org.apache.calcite.rex._
 import org.apache.calcite.sql.SqlAggFunction
@@ -276,7 +277,7 @@ class MatchCodeGenerator(
           }
 
           @Override
-          public void open(${classOf[Configuration].getCanonicalName} parameters) throws Exception {
+          public void open(${classOf[OpenContext].getCanonicalName} openContext) throws Exception {
             ${ctx.reuseOpenCode()}
           }
 
@@ -673,8 +674,11 @@ class MatchCodeGenerator(
             a.sqlAggFunction,
             false,
             false,
+            false,
             a.exprIndices,
             -1,
+            null,
+            RelCollations.EMPTY,
             a.resultType,
             a.sqlAggFunction.getName))
 

@@ -25,6 +25,7 @@ import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.types.StringValue;
+import org.apache.flink.util.CollectionUtil;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -699,6 +700,19 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
         return Optional.empty();
     }
 
+    /**
+     * Please check the java doc of {@link #getRawValueFromOption(ConfigOption)}. If no keys are
+     * found in {@link Configuration}, default value of the given option will return. Please make
+     * sure there will be at least one value available. Otherwise, a NPE will be thrown by Flink
+     * when the value is used.
+     *
+     * <p>NOTE: current logic is not able to get the default value of the fallback key's
+     * ConfigOption, in case the given ConfigOption has no default value. If you want to use
+     * fallback key, please make sure its value could be found in {@link Configuration} at runtime.
+     *
+     * @param option metadata of the option to read
+     * @return the value of the given option
+     */
     @Override
     public <T> T get(ConfigOption<T> option) {
         return getOptional(option).orElseGet(option::defaultValue);
@@ -717,9 +731,11 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
             }
         } catch (Exception e) {
             throw new IllegalArgumentException(
-                    String.format(
-                            "Could not parse value '%s' for key '%s'.",
-                            rawValue.map(Object::toString).orElse(""), option.key()),
+                    GlobalConfiguration.isSensitive(option.key())
+                            ? String.format("Could not parse value for key '%s'.", option.key())
+                            : String.format(
+                                    "Could not parse value '%s' for key '%s'.",
+                                    rawValue.map(Object::toString).orElse(""), option.key()),
                     e);
         }
     }
@@ -736,7 +752,8 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
     @Override
     public Map<String, String> toMap() {
         synchronized (this.confData) {
-            Map<String, String> ret = new HashMap<>(this.confData.size());
+            Map<String, String> ret =
+                    CollectionUtil.newHashMapWithExpectedSize(this.confData.size());
             for (Map.Entry<String, Object> entry : confData.entrySet()) {
                 ret.put(entry.getKey(), ConfigurationUtils.convertToString(entry.getValue()));
             }
@@ -762,6 +779,20 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
                         return Optional.empty();
                     };
             return applyWithOption(configOption, applier).orElse(false);
+        }
+    }
+
+    /**
+     * Removes given key from the configuration.
+     *
+     * @param key key of a config option to remove
+     * @return true is config has been removed, false otherwise
+     */
+    public boolean removeKey(String key) {
+        synchronized (this.confData) {
+            boolean removed = this.confData.remove(key) != null;
+            removed |= removePrefixMap(confData, key);
+            return removed;
         }
     }
 
@@ -810,6 +841,16 @@ public class Configuration extends ExecutionConfig.GlobalJobParameters
         }
     }
 
+    /**
+     * This method will do the following steps to get the value of a config option:
+     *
+     * <p>1. get the value from {@link Configuration}. <br>
+     * 2. if key is not found, try to get the value with fallback keys from {@link Configuration}
+     * <br>
+     * 3. if no fallback keys are found, return {@link Optional#empty()}. <br>
+     *
+     * @return the value of the configuration or {@link Optional#empty()}.
+     */
     private Optional<Object> getRawValueFromOption(ConfigOption<?> configOption) {
         return applyWithOption(configOption, this::getRawValue);
     }

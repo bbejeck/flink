@@ -19,13 +19,16 @@
 package org.apache.flink.runtime.io.network.netty;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.util.NetUtils;
 
 import org.apache.flink.shaded.netty4.io.netty.buffer.ByteBuf;
 import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
+import org.apache.flink.shaded.netty4.io.netty.channel.ChannelHandler;
 import org.apache.flink.shaded.netty4.io.netty.channel.embedded.EmbeddedChannel;
 
+import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +37,7 @@ import java.util.function.Function;
 import static junit.framework.TestCase.assertEquals;
 import static org.apache.flink.runtime.io.network.netty.NettyMessage.BufferResponse;
 import static org.apache.flink.runtime.io.network.netty.NettyMessage.ErrorResponse;
+import static org.apache.flink.util.ExceptionUtils.findThrowableWithMessage;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.junit.Assert.assertTrue;
@@ -95,7 +99,23 @@ public class NettyTestUtil {
     }
 
     static NettyServerAndClient initServerAndClient(NettyProtocol protocol) throws Exception {
-        return initServerAndClient(protocol, createConfig());
+        // It is possible that between checking a port available and binding to the port something
+        // takes this port. So we initialize a server in the loop to decrease the probability of it.
+        int attempts = 42; // The arbitrary number of attempts to avoid an infinity loop.
+        while (true) {
+            try {
+                return initServerAndClient(protocol, createConfig());
+            } catch (Exception ex) {
+                if (!(ex instanceof BindException)
+                        && !findThrowableWithMessage(ex, "Address already in use").isPresent()) {
+                    throw ex;
+                }
+
+                if (attempts-- < 0) {
+                    throw new Exception("Failed to initialize netty server and client", ex);
+                }
+            }
+        }
     }
 
     static NettyServerAndClient initServerAndClient(NettyProtocol protocol, NettyConfig config)
@@ -117,7 +137,7 @@ public class NettyTestUtil {
         final NettyConfig config = server.getConfig();
 
         return client.connect(
-                        new InetSocketAddress(config.getServerAddress(), config.getServerPort()))
+                        new InetSocketAddress(config.getServerAddress(), server.getListeningPort()))
                 .sync()
                 .channel();
     }
@@ -224,12 +244,29 @@ public class NettyTestUtil {
             return client;
         }
 
-        ConnectionID getConnectionID(int connectionIndex) {
+        ConnectionID getConnectionID(ResourceID resourceID, int connectionIndex) {
             return new ConnectionID(
+                    resourceID,
                     new InetSocketAddress(
-                            server.getConfig().getServerAddress(),
-                            server.getConfig().getServerPort()),
+                            server.getConfig().getServerAddress(), server.getListeningPort()),
                     connectionIndex);
+        }
+    }
+
+    static final class NoOpProtocol extends NettyProtocol {
+
+        NoOpProtocol() {
+            super(null, null);
+        }
+
+        @Override
+        public ChannelHandler[] getServerChannelHandlers() {
+            return new ChannelHandler[0];
+        }
+
+        @Override
+        public ChannelHandler[] getClientChannelHandlers() {
+            return new ChannelHandler[0];
         }
     }
 }

@@ -101,11 +101,24 @@ public class RocksDBStateBackendConfigTest {
         final File logFile = File.createTempFile(getClass().getSimpleName() + "-", ".log");
         // set the environment variable 'log.file' with the Flink log file location
         System.setProperty("log.file", logFile.getPath());
-        try (RocksDBResourceContainer container = backend.createOptionsAndResourceContainer()) {
+        try (RocksDBResourceContainer container = backend.createOptionsAndResourceContainer(null)) {
             assertEquals(
                     RocksDBConfigurableOptions.LOG_LEVEL.defaultValue(),
                     container.getDbOptions().infoLogLevel());
             assertEquals(logFile.getParent(), container.getDbOptions().dbLogDir());
+        } finally {
+            logFile.delete();
+        }
+
+        StringBuilder longInstanceBasePath =
+                new StringBuilder(tempFolder.newFolder().getAbsolutePath());
+        while (longInstanceBasePath.length() < 255) {
+            longInstanceBasePath.append("/append-for-long-path");
+        }
+        try (RocksDBResourceContainer container =
+                backend.createOptionsAndResourceContainer(
+                        new File(longInstanceBasePath.toString()))) {
+            assertTrue(container.getDbOptions().dbLogDir().isEmpty());
         } finally {
             logFile.delete();
         }
@@ -196,6 +209,34 @@ public class RocksDBStateBackendConfigTest {
         Assert.assertEquals(
                 HeapPriorityQueueSetFactory.class,
                 keyedBackend.getPriorityQueueFactory().getClass());
+        keyedBackend.dispose();
+        env.close();
+    }
+
+    @Test
+    public void testConfigureRocksDBPriorityQueueFactoryCacheSize() throws Exception {
+        final MockEnvironment env = getMockEnvironment(tempFolder.newFolder());
+        EmbeddedRocksDBStateBackend rocksDbBackend = new EmbeddedRocksDBStateBackend();
+        int cacheSize = 512;
+        Configuration conf = new Configuration();
+        conf.set(
+                RocksDBOptions.TIMER_SERVICE_FACTORY,
+                EmbeddedRocksDBStateBackend.PriorityQueueStateType.ROCKSDB);
+        conf.set(RocksDBOptions.ROCKSDB_TIMER_SERVICE_FACTORY_CACHE_SIZE, cacheSize);
+
+        rocksDbBackend =
+                rocksDbBackend.configure(conf, Thread.currentThread().getContextClassLoader());
+
+        RocksDBKeyedStateBackend<Integer> keyedBackend =
+                createKeyedStateBackend(rocksDbBackend, env, IntSerializer.INSTANCE);
+
+        Assert.assertEquals(
+                RocksDBPriorityQueueSetFactory.class,
+                keyedBackend.getPriorityQueueFactory().getClass());
+        Assert.assertEquals(
+                cacheSize,
+                ((RocksDBPriorityQueueSetFactory) keyedBackend.getPriorityQueueFactory())
+                        .getCacheSize());
         keyedBackend.dispose();
         env.close();
     }
@@ -531,7 +572,7 @@ public class RocksDBStateBackendConfigTest {
 
             try (RocksDBResourceContainer optionsContainer =
                     new RocksDBResourceContainer(
-                            configuration, PredefinedOptions.DEFAULT, null, null, false)) {
+                            configuration, PredefinedOptions.DEFAULT, null, null, null, false)) {
 
                 DBOptions dbOptions = optionsContainer.getDbOptions();
                 assertEquals(-1, dbOptions.maxOpenFiles());
@@ -614,6 +655,7 @@ public class RocksDBStateBackendConfigTest {
                         PredefinedOptions.SPINNING_DISK_OPTIMIZED,
                         null,
                         null,
+                        null,
                         false)) {
 
             final ColumnFamilyOptions columnFamilyOptions = optionsContainer.getColumnOptions();
@@ -625,6 +667,7 @@ public class RocksDBStateBackendConfigTest {
                 new RocksDBResourceContainer(
                         new Configuration(),
                         PredefinedOptions.SPINNING_DISK_OPTIMIZED,
+                        null,
                         null,
                         null,
                         false)) {

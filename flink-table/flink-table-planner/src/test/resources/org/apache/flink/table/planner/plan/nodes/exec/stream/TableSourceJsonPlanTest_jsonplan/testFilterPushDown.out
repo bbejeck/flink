@@ -22,9 +22,9 @@
           },
           "partitionKeys" : [ ],
           "options" : {
+            "bounded" : "false",
             "connector" : "values",
-            "filterable-fields" : "a",
-            "bounded" : "false"
+            "filterable-fields" : "a"
           }
         }
       },
@@ -40,7 +40,7 @@
             "type" : "BIGINT"
           }, {
             "kind" : "LITERAL",
-            "value" : "0",
+            "value" : 0,
             "type" : "INT NOT NULL"
           } ],
           "type" : "BOOLEAN"
@@ -56,6 +56,7 @@
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
       "table.exec.sink.not-null-enforcer" : "ERROR",
+      "table.exec.sink.rowtime-inserter" : "ENABLED",
       "table.exec.sink.type-length-enforcer" : "IGNORE",
       "table.exec.sink.upsert-materialize" : "AUTO"
     },

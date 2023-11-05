@@ -128,8 +128,7 @@ public class HybridSourceSplitEnumeratorTest {
         Whitebox.setInternalState(enumerator, "currentEnumerator", underlyingEnumeratorWrapper);
 
         List<MockSourceSplit> mockSourceSplits =
-                (List<MockSourceSplit>)
-                        Whitebox.getInternalState(underlyingEnumeratorWrapper.enumerator, "splits");
+                Whitebox.getInternalState(underlyingEnumeratorWrapper.enumerator, "splits");
         assertThat(mockSourceSplits).isEmpty();
 
         // simulate reader reset to before switch by adding split of previous source back
@@ -216,6 +215,79 @@ public class HybridSourceSplitEnumeratorTest {
         Mockito.verify(underlyingEnumeratorSpy).handleSourceEvent(0, se);
     }
 
+    @Test
+    public void testInterceptNoMoreSplitEvent() {
+        context = new MockSplitEnumeratorContext<>(2);
+        source = HybridSource.builder(MOCK_SOURCE).addSource(MOCK_SOURCE).build();
+
+        enumerator = (HybridSourceSplitEnumerator) source.createEnumerator(context);
+        enumerator.start();
+        // mock enumerator assigns splits once all readers are registered
+        // At this time, hasNoMoreSplit check will call context.signalIntermediateNoMoreSplits
+        registerReader(context, enumerator, SUBTASK0);
+        registerReader(context, enumerator, SUBTASK1);
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(-1));
+        enumerator.handleSourceEvent(SUBTASK1, new SourceReaderFinishedEvent(-1));
+        assertThat(context.hasNoMoreSplits(0)).isFalse();
+        assertThat(context.hasNoMoreSplits(1)).isFalse();
+        splitFromSource0 =
+                context.getSplitsAssignmentSequence().get(0).assignment().get(SUBTASK0).get(0);
+
+        // task read finished, hasNoMoreSplit check will call context.signalNoMoreSplits, this is
+        // final finished event
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(0));
+        enumerator.handleSourceEvent(SUBTASK1, new SourceReaderFinishedEvent(0));
+        assertThat(context.hasNoMoreSplits(0)).isTrue();
+        assertThat(context.hasNoMoreSplits(1)).isTrue();
+
+        // test add splits back, then SUBTASK0 restore splitFromSource0 split
+        // reset splits assignment & previous subtaskHasNoMoreSplits flag.
+        context.getSplitsAssignmentSequence().clear();
+        context.resetNoMoreSplits(0);
+        enumerator.addReader(SUBTASK0);
+        enumerator.addSplitsBack(Collections.singletonList(splitFromSource0), SUBTASK0);
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(-1));
+        assertThat(context.hasNoMoreSplits(0)).isFalse();
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(0));
+        assertThat(context.hasNoMoreSplits(0)).isTrue();
+    }
+
+    @Test
+    public void testMultiSubtaskSwitchEnumerator() {
+        context = new MockSplitEnumeratorContext<>(2);
+        source =
+                HybridSource.builder(MOCK_SOURCE)
+                        .addSource(MOCK_SOURCE)
+                        .addSource(MOCK_SOURCE)
+                        .build();
+
+        enumerator = (HybridSourceSplitEnumerator) source.createEnumerator(context);
+        enumerator.start();
+
+        registerReader(context, enumerator, SUBTASK0);
+        registerReader(context, enumerator, SUBTASK1);
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(-1));
+        enumerator.handleSourceEvent(SUBTASK1, new SourceReaderFinishedEvent(-1));
+
+        assertThat(getCurrentSourceIndex(enumerator)).isEqualTo(0);
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(0));
+        assertThat(getCurrentSourceIndex(enumerator)).isEqualTo(0);
+        enumerator.handleSourceEvent(SUBTASK1, new SourceReaderFinishedEvent(0));
+        assertThat(getCurrentSourceIndex(enumerator))
+                .as("all reader finished source-0")
+                .isEqualTo(1);
+
+        enumerator.handleSourceEvent(SUBTASK0, new SourceReaderFinishedEvent(1));
+        assertThat(getCurrentSourceIndex(enumerator))
+                .as(
+                        "only reader-0 has finished reading, reader-1 is not yet done, so do not switch to the next source")
+                .isEqualTo(1);
+        enumerator.handleSourceEvent(SUBTASK1, new SourceReaderFinishedEvent(1));
+        assertThat(getCurrentSourceIndex(enumerator))
+                .as("all reader finished source-1")
+                .isEqualTo(2);
+    }
+
     private static class UnderlyingEnumeratorWrapper
             implements SplitEnumerator<MockSourceSplit, Object> {
         private static final MockSourceSplit SPLIT_1 = new MockSourceSplit(0, 0, 1);
@@ -225,8 +297,7 @@ public class HybridSourceSplitEnumeratorTest {
 
         private UnderlyingEnumeratorWrapper(MockSplitEnumerator enumerator) {
             this.enumerator = enumerator;
-            this.context =
-                    (SplitEnumeratorContext) Whitebox.getInternalState(enumerator, "context");
+            this.context = Whitebox.getInternalState(enumerator, "context");
         }
 
         @Override
@@ -287,11 +358,11 @@ public class HybridSourceSplitEnumeratorTest {
     }
 
     private static int getCurrentSourceIndex(HybridSourceSplitEnumerator enumerator) {
-        return (int) Whitebox.getInternalState(enumerator, "currentSourceIndex");
+        return Whitebox.getInternalState(enumerator, "currentSourceIndex");
     }
 
     private static MockSplitEnumerator getCurrentEnumerator(
             HybridSourceSplitEnumerator enumerator) {
-        return (MockSplitEnumerator) Whitebox.getInternalState(enumerator, "currentEnumerator");
+        return Whitebox.getInternalState(enumerator, "currentEnumerator");
     }
 }

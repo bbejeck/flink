@@ -18,6 +18,7 @@
 
 package org.apache.flink.state.api;
 
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.Types;
@@ -83,7 +84,7 @@ public class SavepointDeepCopyTest extends AbstractTestBase {
         private ValueState<Tuple2<String, String>> state;
 
         @Override
-        public void open(Configuration parameters) {
+        public void open(OpenContext openContext) {
             ValueStateDescriptor<Tuple2<String, String>> descriptor =
                     new ValueStateDescriptor<>("state", Types.TUPLE(Types.STRING, Types.STRING));
             state = getRuntimeContext().getState(descriptor);
@@ -103,10 +104,16 @@ public class SavepointDeepCopyTest extends AbstractTestBase {
         private ValueState<Tuple2<String, String>> state;
 
         @Override
-        public void open(Configuration parameters) {
+        public void open(OpenContext openContext) {
             ValueStateDescriptor<Tuple2<String, String>> stateDescriptor =
                     new ValueStateDescriptor<>("state", Types.TUPLE(Types.STRING, Types.STRING));
             state = getRuntimeContext().getState(stateDescriptor);
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            throw new UnsupportedOperationException(
+                    "This method is deprecated and shouldn't be invoked. Please use open(OpenContext) instead.");
         }
 
         @Override
@@ -146,7 +153,7 @@ public class SavepointDeepCopyTest extends AbstractTestBase {
         File savepointUrl1 = createAndRegisterTempFile(new AbstractID().toHexString());
         String savepointPath1 = savepointUrl1.getPath();
 
-        SavepointWriter.newSavepoint(backend, 128)
+        SavepointWriter.newSavepoint(env, backend, 128)
                 .withConfiguration(FS_SMALL_FILE_THRESHOLD, FILE_STATE_SIZE_THRESHOLD)
                 .withOperator(OperatorIdentifier.forUid("Operator1"), transformation)
                 .write(savepointPath1);
@@ -164,7 +171,7 @@ public class SavepointDeepCopyTest extends AbstractTestBase {
         String savepointPath2 = savepointUrl2.getPath();
 
         SavepointWriter savepoint2 =
-                SavepointWriter.fromExistingSavepoint(savepointPath1, backend)
+                SavepointWriter.fromExistingSavepoint(env, savepointPath1, backend)
                         .withConfiguration(FS_SMALL_FILE_THRESHOLD, FILE_STATE_SIZE_THRESHOLD);
 
         savepoint2

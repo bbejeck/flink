@@ -42,6 +42,7 @@ import org.apache.flink.streaming.api.transformations.OneInputTransformation;
 import org.apache.flink.streaming.api.transformations.PartitionTransformation;
 import org.apache.flink.streaming.api.transformations.SideOutputTransformation;
 import org.apache.flink.streaming.api.transformations.TwoInputTransformation;
+import org.apache.flink.streaming.api.transformations.python.DelegateOperatorTransformation;
 import org.apache.flink.streaming.api.transformations.python.PythonBroadcastStateTransformation;
 import org.apache.flink.streaming.api.transformations.python.PythonKeyedBroadcastStateTransformation;
 import org.apache.flink.streaming.api.utils.ByteArrayWrapper;
@@ -51,9 +52,9 @@ import org.apache.flink.streaming.runtime.translators.python.PythonBroadcastStat
 import org.apache.flink.streaming.runtime.translators.python.PythonKeyedBroadcastStateTransformationTranslator;
 import org.apache.flink.util.OutputTag;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Iterables;
-import org.apache.flink.shaded.guava30.com.google.common.collect.Queues;
-import org.apache.flink.shaded.guava30.com.google.common.collect.Sets;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Iterables;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Queues;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Sets;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -152,6 +153,8 @@ public class PythonConfigUtil {
             return ((TwoInputTransformation<?, ?, ?>) transform).getOperatorFactory();
         } else if (transform instanceof AbstractMultipleInputTransformation) {
             return ((AbstractMultipleInputTransformation<?>) transform).getOperatorFactory();
+        } else if (transform instanceof DelegateOperatorTransformation<?>) {
+            return ((DelegateOperatorTransformation<?>) transform).getOperatorFactory();
         } else {
             return null;
         }
@@ -189,7 +192,7 @@ public class PythonConfigUtil {
                 .getSlotSharingGroup()
                 .ifPresent(firstTransformation::setSlotSharingGroup);
         firstTransformation.setCoLocationGroupKey(secondTransformation.getCoLocationGroupKey());
-        firstTransformation.setParallelism(secondTransformation.getParallelism());
+        firstTransformation.setParallelism(secondTransformation.getParallelism(), false);
     }
 
     private static void configForwardPartitioner(
@@ -214,6 +217,9 @@ public class PythonConfigUtil {
         } else if (transformation instanceof AbstractMultipleInputTransformation) {
             operatorFactory =
                     ((AbstractMultipleInputTransformation<?>) transformation).getOperatorFactory();
+        } else if (transformation instanceof DelegateOperatorTransformation) {
+            operatorFactory =
+                    ((DelegateOperatorTransformation<?>) transformation).getOperatorFactory();
         }
 
         if (operatorFactory instanceof SimpleOperatorFactory
@@ -260,6 +266,9 @@ public class PythonConfigUtil {
         } else if (transform instanceof TwoInputTransformation) {
             return isPythonDataStreamOperator(
                     ((TwoInputTransformation<?, ?, ?>) transform).getOperatorFactory());
+        } else if (transform instanceof PythonBroadcastStateTransformation
+                || transform instanceof PythonKeyedBroadcastStateTransformation) {
+            return true;
         } else {
             return false;
         }

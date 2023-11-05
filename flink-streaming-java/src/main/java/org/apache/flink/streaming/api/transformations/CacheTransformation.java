@@ -21,7 +21,7 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.util.AbstractID;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Lists;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Lists;
 
 import java.util.Collections;
 import java.util.List;
@@ -45,7 +45,11 @@ public class CacheTransformation<T> extends Transformation<T> {
      *     the Log
      */
     public CacheTransformation(Transformation<T> transformationToCache, String name) {
-        super(name, transformationToCache.getOutputType(), transformationToCache.getParallelism());
+        super(
+                name,
+                transformationToCache.getOutputType(),
+                transformationToCache.getParallelism(),
+                transformationToCache.isParallelismConfigured());
         this.transformationToCache = transformationToCache;
 
         this.datasetId = new AbstractID();

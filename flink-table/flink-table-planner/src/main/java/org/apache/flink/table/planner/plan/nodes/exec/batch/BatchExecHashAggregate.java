@@ -27,6 +27,9 @@ import org.apache.flink.table.planner.codegen.CodeGeneratorContext;
 import org.apache.flink.table.planner.codegen.agg.batch.AggWithoutKeysCodeGenerator;
 import org.apache.flink.table.planner.codegen.agg.batch.HashAggCodeGenerator;
 import org.apache.flink.table.planner.delegation.PlannerBase;
+import org.apache.flink.table.planner.plan.fusion.OpFusionCodegenSpecGenerator;
+import org.apache.flink.table.planner.plan.fusion.generator.OneInputOpFusionCodegenSpecGenerator;
+import org.apache.flink.table.planner.plan.fusion.spec.HashAggFusionCodegenSpec;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
@@ -58,6 +61,7 @@ public class BatchExecHashAggregate extends ExecNodeBase<RowData>
     private final RowType aggInputRowType;
     private final boolean isMerge;
     private final boolean isFinal;
+    private final boolean supportAdaptiveLocalHashAgg;
 
     public BatchExecHashAggregate(
             ReadableConfig tableConfig,
@@ -67,6 +71,7 @@ public class BatchExecHashAggregate extends ExecNodeBase<RowData>
             RowType aggInputRowType,
             boolean isMerge,
             boolean isFinal,
+            boolean supportAdaptiveLocalHashAgg,
             InputProperty inputProperty,
             RowType outputType,
             String description) {
@@ -83,6 +88,7 @@ public class BatchExecHashAggregate extends ExecNodeBase<RowData>
         this.aggInputRowType = aggInputRowType;
         this.isMerge = isMerge;
         this.isFinal = isFinal;
+        this.supportAdaptiveLocalHashAgg = supportAdaptiveLocalHashAgg;
     }
 
     @SuppressWarnings("unchecked")
@@ -126,17 +132,24 @@ public class BatchExecHashAggregate extends ExecNodeBase<RowData>
                     config.get(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_HASH_AGG_MEMORY)
                             .getBytes();
             generatedOperator =
-                    new HashAggCodeGenerator(
-                                    ctx,
-                                    planner.createRelBuilder(),
-                                    aggInfos,
-                                    inputRowType,
-                                    outputRowType,
-                                    grouping,
-                                    auxGrouping,
-                                    isMerge,
-                                    isFinal)
-                            .genWithKeys();
+                    HashAggCodeGenerator.genWithKeys(
+                            ctx,
+                            planner.createRelBuilder(),
+                            aggInfos,
+                            inputRowType,
+                            outputRowType,
+                            grouping,
+                            auxGrouping,
+                            isMerge,
+                            isFinal,
+                            supportAdaptiveLocalHashAgg,
+                            config.get(ExecutionConfigOptions.TABLE_EXEC_SORT_MAX_NUM_FILE_HANDLES),
+                            config.get(ExecutionConfigOptions.TABLE_EXEC_SPILL_COMPRESSION_ENABLED),
+                            (int)
+                                    config.get(
+                                                    ExecutionConfigOptions
+                                                            .TABLE_EXEC_SPILL_COMPRESSION_BLOCK_SIZE)
+                                            .getBytes());
         }
 
         return ExecNodeUtil.createOneInputTransformation(
@@ -146,6 +159,61 @@ public class BatchExecHashAggregate extends ExecNodeBase<RowData>
                 new CodeGenOperatorFactory<>(generatedOperator),
                 InternalTypeInfo.of(outputRowType),
                 inputTransform.getParallelism(),
-                managedMemory);
+                managedMemory,
+                false);
+    }
+
+    @Override
+    public boolean supportFusionCodegen() {
+        return true;
+    }
+
+    @Override
+    protected OpFusionCodegenSpecGenerator translateToFusionCodegenSpecInternal(
+            PlannerBase planner, ExecNodeConfig config) {
+        OpFusionCodegenSpecGenerator input =
+                getInputEdges().get(0).translateToFusionCodegenSpec(planner);
+
+        final AggregateInfoList aggInfos =
+                AggregateUtil.transformToBatchAggregateInfoList(
+                        planner.getTypeFactory(),
+                        aggInputRowType,
+                        JavaScalaConversionUtil.toScala(Arrays.asList(aggCalls)),
+                        null, // aggCallNeedRetractions
+                        null); // orderKeyIndexes
+        long managedMemory =
+                config.get(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_HASH_AGG_MEMORY).getBytes();
+        if (grouping.length == 0) {
+            managedMemory = 0L;
+        }
+
+        OpFusionCodegenSpecGenerator hashAggSpecGenerator =
+                new OneInputOpFusionCodegenSpecGenerator(
+                        input,
+                        managedMemory,
+                        (RowType) getOutputType(),
+                        new HashAggFusionCodegenSpec(
+                                new CodeGeneratorContext(
+                                        config, planner.getFlinkContext().getClassLoader()),
+                                planner.createRelBuilder(),
+                                aggInfos,
+                                grouping,
+                                auxGrouping,
+                                isFinal,
+                                isMerge,
+                                supportAdaptiveLocalHashAgg,
+                                config.get(
+                                        ExecutionConfigOptions
+                                                .TABLE_EXEC_SORT_MAX_NUM_FILE_HANDLES),
+                                config.get(
+                                        ExecutionConfigOptions
+                                                .TABLE_EXEC_SPILL_COMPRESSION_ENABLED),
+                                (int)
+                                        config.get(
+                                                        ExecutionConfigOptions
+                                                                .TABLE_EXEC_SPILL_COMPRESSION_BLOCK_SIZE)
+                                                .getBytes()));
+        input.addOutput(1, hashAggSpecGenerator);
+        return hashAggSpecGenerator;
     }
 }

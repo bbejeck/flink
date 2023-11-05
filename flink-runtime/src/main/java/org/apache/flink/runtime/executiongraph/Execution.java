@@ -52,6 +52,7 @@ import org.apache.flink.runtime.shuffle.ShuffleDescriptor;
 import org.apache.flink.runtime.shuffle.ShuffleMaster;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorOperatorEventGateway;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
+import org.apache.flink.util.CollectionUtil;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.OptionalFailure;
@@ -66,7 +67,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -490,7 +490,9 @@ public class Execution
                 .thenApply(
                         rpdds -> {
                             Map<IntermediateResultPartitionID, ResultPartitionDeploymentDescriptor>
-                                    producedPartitions = new LinkedHashMap<>(partitions.size());
+                                    producedPartitions =
+                                            CollectionUtil.newLinkedHashMapWithExpectedSize(
+                                                    partitions.size());
                             rpdds.forEach(
                                     rpdd -> producedPartitions.put(rpdd.getPartitionId(), rpdd));
                             return producedPartitions;
@@ -568,8 +570,10 @@ public class Execution
                     slot.getAllocationId());
 
             final TaskDeploymentDescriptor deployment =
-                    TaskDeploymentDescriptorFactory.fromExecution(this)
+                    vertex.getExecutionGraphAccessor()
+                            .getTaskDeploymentDescriptorFactory()
                             .createDeploymentDescriptor(
+                                    this,
                                     slot.getAllocationId(),
                                     taskRestore,
                                     producedPartitions.values());
@@ -730,39 +734,42 @@ public class Execution
                 final ExecutionVertex consumerVertex =
                         vertex.getExecutionGraphAccessor()
                                 .getExecutionVertexOrThrow(consumerVertexId);
-                final Execution consumer = consumerVertex.getCurrentExecutionAttempt();
-                final ExecutionState consumerState = consumer.getState();
+                final Collection<Execution> consumers = consumerVertex.getCurrentExecutions();
+                for (Execution consumer : consumers) {
+                    final ExecutionState consumerState = consumer.getState();
+                    // ----------------------------------------------------------------
+                    // Consumer is recovering or running => send update message now
+                    // Consumer is deploying => cache the partition info which would be
+                    // sent after switching to running
+                    // ----------------------------------------------------------------
+                    if (consumerState == DEPLOYING
+                            || consumerState == RUNNING
+                            || consumerState == INITIALIZING) {
+                        final PartitionInfo partitionInfo = createFinishedPartitionInfo(partition);
+                        updatedVertices.add(consumerVertexId);
 
-                // ----------------------------------------------------------------
-                // Consumer is recovering or running => send update message now
-                // Consumer is deploying => cache the partition info which would be
-                // sent after switching to running
-                // ----------------------------------------------------------------
-                if (consumerState == DEPLOYING
-                        || consumerState == RUNNING
-                        || consumerState == INITIALIZING) {
-                    final PartitionInfo partitionInfo = createPartitionInfo(partition);
-                    updatedVertices.add(consumerVertexId);
-
-                    if (consumerState == DEPLOYING) {
-                        consumerVertex.cachePartitionInfo(partitionInfo);
-                    } else {
-                        consumer.sendUpdatePartitionInfoRpcCall(
-                                Collections.singleton(partitionInfo));
+                        if (consumerState == DEPLOYING) {
+                            consumerVertex.cachePartitionInfo(partitionInfo);
+                        } else {
+                            consumer.sendUpdatePartitionInfoRpcCall(
+                                    Collections.singleton(partitionInfo));
+                        }
                     }
                 }
             }
         }
     }
 
-    private static PartitionInfo createPartitionInfo(
+    private static PartitionInfo createFinishedPartitionInfo(
             IntermediateResultPartition consumedPartition) {
         IntermediateDataSetID intermediateDataSetID =
                 consumedPartition.getIntermediateResult().getId();
         ShuffleDescriptor shuffleDescriptor =
                 getConsumedPartitionShuffleDescriptor(
                         consumedPartition,
-                        TaskDeploymentDescriptorFactory.PartitionLocationConstraint.MUST_BE_KNOWN);
+                        TaskDeploymentDescriptorFactory.PartitionLocationConstraint.MUST_BE_KNOWN,
+                        // because partition is already finished, false is fair enough.
+                        false);
         return new PartitionInfo(intermediateDataSetID, shuffleDescriptor);
     }
 
@@ -975,7 +982,7 @@ public class Execution
 
     private void finishPartitionsAndUpdateConsumers() {
         final List<IntermediateResultPartition> finishedPartitions =
-                getVertex().finishAllBlockingPartitions();
+                getVertex().finishPartitionsIfNeeded();
 
         for (IntermediateResultPartition partition : finishedPartitions) {
             updatePartitionConsumers(partition);
@@ -1183,7 +1190,7 @@ public class Execution
         }
     }
 
-    boolean switchToRecovering() {
+    boolean switchToInitializing() {
         if (switchTo(DEPLOYING, INITIALIZING)) {
             sendPartitionInfos();
             return true;
@@ -1548,7 +1555,17 @@ public class Execution
             }
         }
         if (metrics != null) {
-            this.ioMetrics = metrics;
+            // Drop IOMetrics#resultPartitionBytes because it will not be used anymore. It can
+            // result in very high memory usage when there are many executions and sub-partitions.
+            this.ioMetrics =
+                    new IOMetrics(
+                            metrics.getNumBytesIn(),
+                            metrics.getNumBytesOut(),
+                            metrics.getNumRecordsIn(),
+                            metrics.getNumRecordsOut(),
+                            metrics.getAccumulateIdleTime(),
+                            metrics.getAccumulateBusyTime(),
+                            metrics.getAccumulateBackPressuredTime());
         }
     }
 

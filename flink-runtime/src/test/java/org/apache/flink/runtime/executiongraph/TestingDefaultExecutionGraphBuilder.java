@@ -35,8 +35,10 @@ import org.apache.flink.runtime.client.JobExecutionException;
 import org.apache.flink.runtime.deployment.TaskDeploymentDescriptorFactory;
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.io.network.partition.NoOpJobMasterPartitionTracker;
+import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
+import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.scheduler.SchedulerBase;
 import org.apache.flink.runtime.scheduler.VertexParallelismStore;
 import org.apache.flink.runtime.shuffle.ShuffleMaster;
@@ -74,6 +76,11 @@ public class TestingDefaultExecutionGraphBuilder {
             (execution, previousState, newState) -> {};
     private VertexParallelismStore vertexParallelismStore;
     private ExecutionJobVertex.Factory executionJobVertexFactory = new ExecutionJobVertex.Factory();
+
+    private MarkPartitionFinishedStrategy markPartitionFinishedStrategy =
+            ResultPartitionType::isBlockingOrBlockingPersistentResultPartition;
+
+    private boolean nonFinishedHybridPartitionShouldBeUnknown = false;
 
     private TestingDefaultExecutionGraphBuilder() {}
 
@@ -149,6 +156,18 @@ public class TestingDefaultExecutionGraphBuilder {
         return this;
     }
 
+    public TestingDefaultExecutionGraphBuilder setMarkPartitionFinishedStrategy(
+            MarkPartitionFinishedStrategy markPartitionFinishedStrategy) {
+        this.markPartitionFinishedStrategy = markPartitionFinishedStrategy;
+        return this;
+    }
+
+    public TestingDefaultExecutionGraphBuilder setNonFinishedHybridPartitionShouldBeUnknown(
+            boolean nonFinishedHybridPartitionShouldBeUnknown) {
+        this.nonFinishedHybridPartitionShouldBeUnknown = nonFinishedHybridPartitionShouldBeUnknown;
+        return this;
+    }
+
     private DefaultExecutionGraph build(
             boolean isDynamicGraph, ScheduledExecutorService executorService)
             throws JobException, JobExecutionException {
@@ -176,7 +195,10 @@ public class TestingDefaultExecutionGraphBuilder {
                         .orElseGet(() -> SchedulerBase.computeVertexParallelismStore(jobGraph)),
                 () -> new CheckpointStatsTracker(0, new UnregisteredMetricsGroup()),
                 isDynamicGraph,
-                executionJobVertexFactory);
+                executionJobVertexFactory,
+                markPartitionFinishedStrategy,
+                nonFinishedHybridPartitionShouldBeUnknown,
+                UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
     }
 
     public DefaultExecutionGraph build(ScheduledExecutorService executorService)

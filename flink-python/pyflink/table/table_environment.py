@@ -792,8 +792,9 @@ class TableEnvironment(object):
         .. versionadded:: 1.11.0
         """
 
+        JExplainFormat = get_gateway().jvm.org.apache.flink.table.api.ExplainFormat
         j_extra_details = to_j_explain_detail_arr(extra_details)
-        return self._j_tenv.explainSql(stmt, j_extra_details)
+        return self._j_tenv.explainSql(stmt, JExplainFormat.TEXT, j_extra_details)
 
     def sql_query(self, query: str) -> Table:
         """
@@ -1514,7 +1515,7 @@ class TableEnvironment(object):
             pytz.timezone(self.get_config().get_local_timezone()))
         step = -(-len(pdf) // splits_num)
         pdf_slices = [pdf.iloc[start:start + step] for start in range(0, len(pdf), step)]
-        data = [[c for (_, c) in pdf_slice.iteritems()] for pdf_slice in pdf_slices]
+        data = [[c for (_, c) in pdf_slice.items()] for pdf_slice in pdf_slices]
         try:
             with temp_file:
                 serializer.serialize(data, temp_file)

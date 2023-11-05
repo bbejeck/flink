@@ -24,7 +24,7 @@ import org.apache.flink.runtime.io.network.partition.hybrid.HsFileDataIndex.Spil
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FatalExitExceptionHandler;
 
-import org.apache.flink.shaded.guava30.com.google.common.util.concurrent.ThreadFactoryBuilder;
+import org.apache.flink.shaded.guava31.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -152,22 +152,10 @@ public class HsMemoryDataSpiller implements AutoCloseable {
     }
 
     /**
-     * Close this {@link HsMemoryDataSpiller} when resultPartition is closed. It means spiller will
-     * no longer accept new spilling operation.
-     *
-     * <p>This method only called by main task thread.
+     * Close this {@link HsMemoryDataSpiller}. It means spiller will no longer accept new spilling
+     * operation and wait for all previous spilling operation done blocking.
      */
     public void close() {
-        ioExecutor.shutdown();
-    }
-
-    /**
-     * Release this {@link HsMemoryDataSpiller} when resultPartition is released. It means spiller
-     * will wait for all previous spilling operation done blocking and close the file channel.
-     *
-     * <p>This method only called by rpc thread.
-     */
-    public void release() {
         try {
             ioExecutor.shutdown();
             if (!ioExecutor.awaitTermination(5L, TimeUnit.MINUTES)) {

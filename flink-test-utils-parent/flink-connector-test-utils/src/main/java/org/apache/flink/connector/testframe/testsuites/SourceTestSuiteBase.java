@@ -26,6 +26,7 @@ import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.api.connector.source.Source;
+import org.apache.flink.configuration.AkkaOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.testframe.environment.ClusterControllable;
 import org.apache.flink.connector.testframe.environment.TestEnvironment;
@@ -46,7 +47,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
+import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
 import org.apache.flink.streaming.api.operators.collect.CollectResultIterator;
 import org.apache.flink.streaming.api.operators.collect.CollectSinkOperator;
 import org.apache.flink.streaming.api.operators.collect.CollectSinkOperatorFactory;
@@ -74,13 +75,12 @@ import java.util.concurrent.TimeUnit;
 
 import static java.util.Collections.singletonList;
 import static java.util.concurrent.CompletableFuture.runAsync;
-import static org.apache.flink.connector.testframe.utils.ConnectorTestConstants.DEFAULT_COLLECT_DATA_TIMEOUT;
 import static org.apache.flink.connector.testframe.utils.MetricQuerier.getJobDetails;
+import static org.apache.flink.core.testutils.FlinkAssertions.assertThatFuture;
 import static org.apache.flink.runtime.testutils.CommonTestUtils.terminateJob;
 import static org.apache.flink.runtime.testutils.CommonTestUtils.waitForAllTaskRunning;
 import static org.apache.flink.runtime.testutils.CommonTestUtils.waitForJobStatus;
 import static org.apache.flink.runtime.testutils.CommonTestUtils.waitUntilCondition;
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
 /**
  * Base class for all test suites.
@@ -435,7 +435,7 @@ public abstract class SourceTestSuiteBase<T> {
                                 WatermarkStrategy.noWatermarks(),
                                 sourceName)
                         .setParallelism(splitNumber);
-        dataStreamSource.addSink(new DiscardingSink<>());
+        dataStreamSource.sinkTo(new DiscardingSink<>());
         final JobClient jobClient = env.executeAsync("Metrics Test");
 
         final MetricQuerier queryRestClient = new MetricQuerier(new Configuration());
@@ -738,7 +738,7 @@ public abstract class SourceTestSuiteBase<T> {
                                     .withNumRecordsLimit(limit)
                                     .matchesRecordsFromSource(testData, semantic);
 
-            assertThat(runAsync(runnable)).succeedsWithin(DEFAULT_COLLECT_DATA_TIMEOUT);
+            assertThatFuture(runAsync(runnable)).eventuallySucceeds();
         } else {
             CollectIteratorAssertions.assertThat(resultIterator)
                     .matchesRecordsFromSource(testData, semantic);
@@ -793,7 +793,8 @@ public abstract class SourceTestSuiteBase<T> {
                             operator.getOperatorIdFuture(),
                             serializer,
                             accumulatorName,
-                            checkpointConfig);
+                            checkpointConfig,
+                            AkkaOptions.ASK_TIMEOUT_DURATION.defaultValue().toMillis());
             iterator.setJobClient(jobClient);
             return iterator;
         }

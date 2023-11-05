@@ -75,6 +75,9 @@ public class MinioTestContainer extends GenericContainer<MinioTestContainer> {
                         .forPort(DEFAULT_PORT)
                         .forPath(HEALTH_ENDPOINT)
                         .withStartupTimeout(Duration.ofMinutes(2)));
+        // Very rarely, a 503 status will be returned continuously while the container is
+        // starting up, slipping past the AmazonS3 client's default retry strategy.
+        withStartupAttempts(3);
     }
 
     @Override
@@ -101,7 +104,7 @@ public class MinioTestContainer extends GenericContainer<MinioTestContainer> {
     }
 
     private String getHttpEndpoint() {
-        return String.format("http://%s:%s", getContainerIpAddress(), getMappedPort(DEFAULT_PORT));
+        return String.format("http://%s:%s", getHost(), getMappedPort(DEFAULT_PORT));
     }
 
     /**

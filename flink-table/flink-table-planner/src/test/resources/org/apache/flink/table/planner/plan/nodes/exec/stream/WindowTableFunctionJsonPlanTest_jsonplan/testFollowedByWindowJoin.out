@@ -261,7 +261,7 @@
         "type" : "BIGINT"
       }, {
         "kind" : "LITERAL",
-        "value" : "10",
+        "value" : 10,
         "type" : "INT NOT NULL"
       } ],
       "type" : "BOOLEAN"
@@ -549,7 +549,7 @@
         "type" : "BIGINT"
       }, {
         "kind" : "LITERAL",
-        "value" : "10",
+        "value" : 10,
         "type" : "INT NOT NULL"
       } ],
       "type" : "BOOLEAN"
@@ -686,6 +686,7 @@
     "configuration" : {
       "table.exec.sink.keyed-shuffle" : "AUTO",
       "table.exec.sink.not-null-enforcer" : "ERROR",
+      "table.exec.sink.rowtime-inserter" : "ENABLED",
       "table.exec.sink.type-length-enforcer" : "IGNORE",
       "table.exec.sink.upsert-materialize" : "AUTO"
     },

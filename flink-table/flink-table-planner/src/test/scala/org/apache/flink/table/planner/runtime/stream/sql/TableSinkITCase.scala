@@ -114,7 +114,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                     |""".stripMargin)
       .await()
 
-    val result = TestValuesTableFactory.getResults("JoinDisorderChangeLog")
+    val result = TestValuesTableFactory.getResultsAsStrings("JoinDisorderChangeLog")
     val expected = List("+I[jason, 4, 22.5, 22]")
     assertEquals(expected.sorted, result.sorted)
   }
@@ -139,7 +139,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                     |""".stripMargin)
       .await()
 
-    val result = TestValuesTableFactory.getResults("SinkDisorderChangeLog")
+    val result = TestValuesTableFactory.getResultsAsStrings("SinkDisorderChangeLog")
     val expected = List("+I[jason, 4, 22.5]")
     assertEquals(expected.sorted, result.sorted)
   }
@@ -168,7 +168,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
           |""".stripMargin)
       .await()
 
-    val result = TestValuesTableFactory.getResults("SinkRankChangeLog")
+    val result = TestValuesTableFactory.getResultsAsStrings("SinkRankChangeLog")
     val expected = List("+I[jason, 4]")
     assertEquals(expected.sorted, result.sorted)
   }
@@ -197,14 +197,14 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                      |""".stripMargin)
       .await()
 
-    val result = TestValuesTableFactory.getResults("sink_with_pk")
+    val result = TestValuesTableFactory.getResultsAsStrings("sink_with_pk")
     val expected = List(
       "+I[user1, Tom, tom123@gmail.com, 8.10]",
       "+I[user3, Bailey, bailey@qq.com, 9.99]",
       "+I[user4, Tina, tina@gmail.com, 11.30]")
     assertEquals(expected.sorted, result.sorted)
 
-    val rawResult = TestValuesTableFactory.getRawResults("sink_with_pk")
+    val rawResult = TestValuesTableFactory.getRawResultsAsStrings("sink_with_pk")
     val expectedRaw = List(
       "+I[user1, Tom, tom@gmail.com, 10.02]",
       "+I[user2, Jack, jack@hotmail.com, 71.20]",
@@ -246,7 +246,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                     |""".stripMargin)
       .await()
 
-    val result = TestValuesTableFactory.getResults("zm_test")
+    val result = TestValuesTableFactory.getResultsAsStrings("zm_test")
     val expected = List(
       "+I[jason, 1, null, null, null, null]",
       "+I[jason, 1, null, null, null, null]",
@@ -272,7 +272,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                     |    src
                     |""".stripMargin)
       .await()
-    val actual = TestValuesTableFactory.getResults("MyCtasTable")
+    val actual = TestValuesTableFactory.getResultsAsStrings("MyCtasTable")
     val expected = List(
       "+I[jason, 1]",
       "+I[jason, 1]",
@@ -295,7 +295,7 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
                                 |    src
                                 |""".stripMargin)
     statementSet.execute().await()
-    val actualUseStatement = TestValuesTableFactory.getResults("MyCtasTableUseStatement")
+    val actualUseStatement = TestValuesTableFactory.getResultsAsStrings("MyCtasTableUseStatement")
     Assertions.assertThat(actualUseStatement.sorted).isEqualTo(expected.sorted)
   }
 
@@ -311,5 +311,76 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
       .hasMessage("You should enable the checkpointing for sinking to managed table " +
         "'default_catalog.default_database.MyCtasTable'," +
         " managed table relies on checkpoint to commit and the data is visible only after commit.")
+  }
+
+  @Test
+  def testPartialInsert(): Unit = {
+    val srcDataId = TestValuesTableFactory.registerData(
+      Seq(
+        row(1L, "jason", 3L, "X", 43),
+        row(2L, "andy", 2L, "Y", 32),
+        row(3L, "clark", 1L, "Z", 29)
+      ))
+    tEnv.executeSql(s"""
+                       |CREATE TABLE test_source (
+                       |  id bigint,
+                       |  person String,
+                       |  votes bigint,
+                       |  city String,
+                       |  age int)
+                       |WITH (
+                       |  'connector' = 'values',
+                       |  'data-id' = '$srcDataId'
+                       |)
+                       |""".stripMargin)
+    tEnv.executeSql("""
+                      |CREATE TABLE test_sink (
+                      |  id bigint,
+                      |  person String,
+                      |  votes bigint,
+                      |  city String,
+                      |  age int,
+                      |  primary key(id) not enforced
+                      |) WITH (
+                      |  'connector' = 'values',
+                      |  'sink-insert-only' = 'false'
+                      |)
+                      |""".stripMargin)
+
+    tEnv
+      .executeSql("""
+                    |insert into test_sink (id, person, votes)
+                    |  select
+                    |    id,
+                    |    person,
+                    |    votes
+                    |  from
+                    |    test_source
+                    |""".stripMargin)
+      .await()
+
+    val result = TestValuesTableFactory.getResultsAsStrings("test_sink")
+    val expected = List(
+      "+I[1, jason, 3, null, null]",
+      "+I[2, andy, 2, null, null]",
+      "+I[3, clark, 1, null, null]")
+    assertEquals(expected.sorted, result.sorted)
+
+    tEnv
+      .executeSql("""
+                    |insert into test_sink (id, city, age)
+                    |  select
+                    |    id,
+                    |    city,
+                    |    age 
+                    |  from
+                    |    test_source
+                    |""".stripMargin)
+      .await()
+
+    val result2 = TestValuesTableFactory.getResultsAsStrings("test_sink")
+    val expected2 =
+      List("+I[1, jason, 3, X, 43]", "+I[2, andy, 2, Y, 32]", "+I[3, clark, 1, Z, 29]")
+    assertEquals(expected2.sorted, result2.sorted)
   }
 }

@@ -26,6 +26,7 @@ import org.apache.flink.core.io.InputSplit;
 import org.apache.flink.core.testutils.CommonTestUtils;
 import org.apache.flink.runtime.blob.VoidPermanentBlobService;
 import org.apache.flink.runtime.broadcast.BroadcastVariableManager;
+import org.apache.flink.runtime.checkpoint.channel.ChannelStateWriteRequestExecutorFactory;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.deployment.InputGateDeploymentDescriptor;
 import org.apache.flink.runtime.deployment.ResultPartitionDeploymentDescriptor;
@@ -45,6 +46,7 @@ import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
 import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.runtime.memory.MemoryManagerBuilder;
+import org.apache.flink.runtime.memory.SharedResources;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
@@ -61,20 +63,18 @@ import org.apache.flink.runtime.taskexecutor.NoOpPartitionProducerStateChecker;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorResourceUtils;
 import org.apache.flink.runtime.taskexecutor.TaskManagerConfiguration;
 import org.apache.flink.runtime.taskexecutor.TestGlobalAggregateManager;
-import org.apache.flink.runtime.taskmanager.CheckpointResponder;
 import org.apache.flink.runtime.taskmanager.NoOpCheckpointResponder;
 import org.apache.flink.runtime.taskmanager.NoOpTaskManagerActions;
 import org.apache.flink.runtime.taskmanager.NoOpTaskOperatorEventGateway;
 import org.apache.flink.runtime.taskmanager.Task;
 import org.apache.flink.runtime.taskmanager.TaskManagerRuntimeInfo;
 import org.apache.flink.runtime.testutils.TestJvmProcess;
+import org.apache.flink.testutils.junit.utils.TempDirUtils;
 import org.apache.flink.util.OperatingSystem;
 import org.apache.flink.util.SerializedValue;
-import org.apache.flink.util.TestLogger;
 
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.net.InetAddress;
@@ -83,28 +83,27 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 import static org.apache.flink.runtime.executiongraph.ExecutionGraphTestUtils.createExecutionAttemptId;
-import static org.junit.Assume.assumeFalse;
-import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 /**
  * Test that verifies the behavior of blocking shutdown hooks and of the {@link
  * JvmShutdownSafeguard} that guards against it.
  */
-public class JvmExitOnFatalErrorTest extends TestLogger {
+class JvmExitOnFatalErrorTest {
 
-    @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
+    @TempDir private java.nio.file.Path tempDir;
 
     @Test
-    public void testExitJvmOnOutOfMemory() throws Exception {
+    void testExitJvmOnOutOfMemory() throws Exception {
         // this test works only on linux and MacOS
-        assumeFalse(OperatingSystem.isWindows());
+        assumeThat(OperatingSystem.isWindows()).isFalse();
 
         // to check what went wrong (when the test hangs) uncomment this line
         //        ProcessEntryPoint.main(new
-        // String[]{temporaryFolder.newFolder().getAbsolutePath()});
+        // String[]{TempDirUtils.newFolder(tempDir).getAbsolutePath()});
 
         final KillOnFatalErrorProcess testProcess =
-                new KillOnFatalErrorProcess(temporaryFolder.newFolder());
+                new KillOnFatalErrorProcess(TempDirUtils.newFolder(tempDir));
 
         try {
             testProcess.startProcess();
@@ -219,10 +218,11 @@ public class JvmExitOnFatalErrorTest extends TestLogger {
                                 jid,
                                 executionAttemptID,
                                 localStateStore,
+                                null,
                                 changelogStorage,
                                 new TaskExecutorStateChangelogStoragesManager(),
                                 null,
-                                mock(CheckpointResponder.class));
+                                NoOpCheckpointResponder.INSTANCE);
 
                 Task task =
                         new Task(
@@ -233,6 +233,7 @@ public class JvmExitOnFatalErrorTest extends TestLogger {
                                 Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
                                 Collections.<InputGateDeploymentDescriptor>emptyList(),
                                 memoryManager,
+                                new SharedResources(),
                                 ioManager,
                                 shuffleEnvironment,
                                 new KvStateService(new KvStateRegistry(), null, null),
@@ -252,7 +253,9 @@ public class JvmExitOnFatalErrorTest extends TestLogger {
                                 tmInfo,
                                 UnregisteredMetricGroups.createUnregisteredTaskMetricGroup(),
                                 new NoOpPartitionProducerStateChecker(),
-                                executor);
+                                executor,
+                                new ChannelStateWriteRequestExecutorFactory(
+                                        jobInformation.getJobId()));
 
                 System.err.println("starting task thread");
 

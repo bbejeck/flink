@@ -19,9 +19,11 @@ package org.apache.flink.streaming.api.functions.sink;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.io.CleanupWhenUnsuccessful;
 import org.apache.flink.api.common.io.OutputFormat;
+import org.apache.flink.api.common.io.OutputFormat.InitializationContext;
 import org.apache.flink.api.common.io.RichOutputFormat;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.InputTypeConfigurable;
@@ -57,12 +59,28 @@ public class OutputFormatSinkFunction<IN> extends RichSinkFunction<IN>
     }
 
     @Override
-    public void open(Configuration parameters) throws Exception {
+    public void open(OpenContext openContext) throws Exception {
         RuntimeContext context = getRuntimeContext();
-        format.configure(parameters);
+        format.configure(new Configuration());
         int indexInSubtaskGroup = context.getIndexOfThisSubtask();
         int currentNumberOfSubtasks = context.getNumberOfParallelSubtasks();
-        format.open(indexInSubtaskGroup, currentNumberOfSubtasks);
+        format.open(
+                new InitializationContext() {
+                    @Override
+                    public int getNumTasks() {
+                        return currentNumberOfSubtasks;
+                    }
+
+                    @Override
+                    public int getTaskNumber() {
+                        return indexInSubtaskGroup;
+                    }
+
+                    @Override
+                    public int getAttemptNumber() {
+                        return context.getAttemptNumber();
+                    }
+                });
     }
 
     @Override

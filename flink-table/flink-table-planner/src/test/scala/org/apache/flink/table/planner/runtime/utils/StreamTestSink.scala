@@ -105,10 +105,7 @@ abstract class AbstractExactlyOnceSink[T] extends RichSinkFunction[T] with Check
   }
 
   override def snapshotState(context: FunctionSnapshotContext): Unit = {
-    resultsState.clear()
-    for (value <- localResults) {
-      resultsState.add(value)
-    }
+    resultsState.update(localResults.asJava)
   }
 
   protected def clearAndStashGlobalResults(): Unit = {
@@ -386,7 +383,7 @@ class TestingOutputFormat[T](tz: TimeZone) extends OutputFormat[T] {
 
   def configure(var1: Configuration): Unit = {}
 
-  def open(taskNumber: Int, numTasks: Int): Unit = {
+  override def open(taskNumber: Int, numTasks: Int): Unit = {
     localRetractResults = mutable.ArrayBuffer.empty[String]
     StreamTestSink.synchronized {
       StreamTestSink.globalResults(index) += (taskNumber -> localRetractResults)

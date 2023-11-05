@@ -20,7 +20,7 @@ package org.apache.flink.table.planner.runtime.utils
 import org.apache.flink.api.common.BatchShuffleMode
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.java.tuple.Tuple
-import org.apache.flink.configuration.ExecutionOptions
+import org.apache.flink.configuration.{BatchExecutionOptions, ExecutionOptions, JobManagerOptions}
 import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.table.api._
@@ -52,8 +52,8 @@ import org.apache.calcite.rel.RelNode
 import org.apache.calcite.runtime.CalciteContextException
 import org.apache.calcite.sql.SqlExplainLevel
 import org.apache.calcite.sql.parser.SqlParseException
-import org.junit.{After, Assert, Before}
-import org.junit.Assert._
+import org.assertj.core.api.Assertions.fail
+import org.junit.jupiter.api.{AfterEach, BeforeEach}
 
 class BatchTestBase extends BatchAbstractTestBase {
 
@@ -61,6 +61,7 @@ class BatchTestBase extends BatchAbstractTestBase {
   protected var testingTableEnv: TestingTableEnvironment = TestingTableEnvironment
     .create(settings, catalogManager = None, TableConfig.getDefault)
   protected var tEnv: TableEnvironment = testingTableEnv
+  tEnv.getConfig.set(BatchExecutionOptions.ADAPTIVE_AUTO_PARALLELISM_ENABLED, Boolean.box(false))
   protected var planner =
     tEnv.asInstanceOf[TableEnvironmentImpl].getPlanner.asInstanceOf[PlannerBase]
   protected var env: StreamExecutionEnvironment = planner.getExecEnv
@@ -73,12 +74,12 @@ class BatchTestBase extends BatchAbstractTestBase {
       + " column ([0-9]+) to line ([0-9]+), column ([0-9]+): (.*)")
 
   @throws(classOf[Exception])
-  @Before
+  @BeforeEach
   def before(): Unit = {
     BatchTestBase.configForMiniCluster(tableConfig)
   }
 
-  @After
+  @AfterEach
   def after(): Unit = {
     TestValuesTableFactory.clearAllData()
   }
@@ -146,12 +147,12 @@ class BatchTestBase extends BatchAbstractTestBase {
     checkFunc(result).foreach {
       results =>
         val plan = explainLogical(table)
-        Assert.fail(s"""
-                       |Results do not match for query:
-                       |  $sqlQuery
-                       |$results
-                       |Plan:
-                       |  $plan
+        fail(s"""
+                |Results do not match for query:
+                |  $sqlQuery
+                |$results
+                |Plan:
+                |  $plan
        """.stripMargin)
     }
   }
@@ -162,11 +163,11 @@ class BatchTestBase extends BatchAbstractTestBase {
     checkFunc(result).foreach {
       results =>
         val plan = explainLogical(table)
-        Assert.fail(s"""
-                       |Results do not match:
-                       |$results
-                       |Plan:
-                       |  $plan
+        fail(s"""
+                |Results do not match:
+                |$results
+                |Plan:
+                |  $plan
        """.stripMargin)
     }
   }
@@ -295,9 +296,9 @@ class BatchTestBase extends BatchAbstractTestBase {
 
     checkEmpty(result).foreach {
       results =>
-        Assert.fail(s"""
-                       |Results do not match for query:
-                       |$results
+        fail(s"""
+                |Results do not match for query:
+                |$results
        """.stripMargin)
     }
   }
@@ -478,7 +479,10 @@ object BatchTestBase {
   }
 
   def binaryRow(types: Array[LogicalType], fields: Any*): BinaryRowData = {
-    assertEquals("Filed count inconsistent with type information", fields.length, types.length)
+    // TODO, replace the failure check with a new and simpler checking method
+    if (fields.length != types.length) {
+      fail("Filed count inconsistent with type information")
+    }
     val row = new BinaryRowData(fields.length)
     val writer = new BinaryRowWriter(row)
     writer.reset()
@@ -528,15 +532,28 @@ object BatchTestBase {
       s"and received ${resultStrings.length}\n " +
       s"expected: ${expectedStrings.mkString}\n " +
       s"received: ${resultStrings.mkString}"
-    assertEquals(msg, expectedStrings.length, resultStrings.length)
+    // TODO, replace these two failure checks with new and simpler checking methods
+    if (expectedStrings.length != resultStrings.length) {
+      fail(msg)
+    }
     expectedStrings.zip(resultStrings).foreach {
       case (e, r) =>
-        assertEquals(msg, e, r)
+        if (e != r) {
+          fail(msg)
+        }
     }
   }
 
   def configForMiniCluster(tableConfig: TableConfig): Unit = {
     tableConfig.set(TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, Int.box(DEFAULT_PARALLELISM))
-    tableConfig.set(ExecutionOptions.BATCH_SHUFFLE_MODE, BatchShuffleMode.ALL_EXCHANGES_PIPELINED)
+  }
+
+  def configBatchShuffleMode(tableConfig: TableConfig, shuffleMode: BatchShuffleMode): Unit = {
+    tableConfig.set(ExecutionOptions.BATCH_SHUFFLE_MODE, shuffleMode)
+    if (shuffleMode == BatchShuffleMode.ALL_EXCHANGES_PIPELINED) {
+      tableConfig.set(JobManagerOptions.SCHEDULER, JobManagerOptions.SchedulerType.Default)
+    } else {
+      tableConfig.set(JobManagerOptions.SCHEDULER, JobManagerOptions.SchedulerType.AdaptiveBatch)
+    }
   }
 }

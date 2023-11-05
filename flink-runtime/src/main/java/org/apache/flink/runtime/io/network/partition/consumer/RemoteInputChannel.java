@@ -41,7 +41,7 @@ import org.apache.flink.runtime.io.network.partition.PrioritizedDeque;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.util.ExceptionUtils;
 
-import org.apache.flink.shaded.guava30.com.google.common.collect.Iterators;
+import org.apache.flink.shaded.guava31.com.google.common.collect.Iterators;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -100,6 +100,9 @@ public class RemoteInputChannel extends InputChannel {
     /** The initial number of exclusive buffers assigned to this channel. */
     private final int initialCredit;
 
+    /** The milliseconds timeout for partition request listener in result partition manager. */
+    private final int partitionRequestListenerTimeout;
+
     /** The number of available buffers that have not been announced to the producer yet. */
     private final AtomicInteger unannouncedCredit = new AtomicInteger(0);
 
@@ -124,6 +127,7 @@ public class RemoteInputChannel extends InputChannel {
             ConnectionManager connectionManager,
             int initialBackOff,
             int maxBackoff,
+            int partitionRequestListenerTimeout,
             int networkBuffersPerChannel,
             Counter numBytesIn,
             Counter numBuffersIn,
@@ -140,6 +144,7 @@ public class RemoteInputChannel extends InputChannel {
                 numBuffersIn);
         checkArgument(networkBuffersPerChannel >= 0, "Must be non-negative.");
 
+        this.partitionRequestListenerTimeout = partitionRequestListenerTimeout;
         this.initialCredit = networkBuffersPerChannel;
         this.connectionId = checkNotNull(connectionId);
         this.connectionManager = checkNotNull(connectionManager);
@@ -201,14 +206,32 @@ public class RemoteInputChannel extends InputChannel {
 
         if (increaseBackoff()) {
             partitionRequestClient.requestSubpartition(
-                    partitionId, consumedSubpartitionIndex, this, getCurrentBackoff());
+                    partitionId, consumedSubpartitionIndex, this, 0);
         } else {
             failPartitionRequest();
         }
     }
 
+    /**
+     * The remote task manager creates partition request listener and returns {@link
+     * PartitionNotFoundException} until the listener is timeout, so the backoff should add the
+     * timeout milliseconds if it exists.
+     *
+     * @return <code>true</code>, iff the operation was successful. Otherwise, <code>false</code>.
+     */
     @Override
-    Optional<BufferAndAvailability> getNextBuffer() throws IOException {
+    protected boolean increaseBackoff() {
+        if (partitionRequestListenerTimeout > 0) {
+            currentBackoff += partitionRequestListenerTimeout;
+            return currentBackoff < 2 * maxBackoff;
+        }
+
+        // Backoff is disabled
+        return false;
+    }
+
+    @Override
+    public Optional<BufferAndAvailability> getNextBuffer() throws IOException {
         checkPartitionRequestQueueInitialized();
 
         final SequenceBuffer next;
@@ -811,6 +834,13 @@ public class RemoteInputChannel extends InputChannel {
         checkState(
                 partitionRequestClient != null,
                 "Bug: partitionRequestClient is not initialized before processing data and no error is detected.");
+    }
+
+    @Override
+    public void notifyRequiredSegmentId(int segmentId) throws IOException {
+        checkState(!isReleased.get(), "Channel released.");
+        checkPartitionRequestQueueInitialized();
+        partitionRequestClient.notifyRequiredSegmentId(this, segmentId);
     }
 
     private static class BufferReorderingException extends IOException {

@@ -37,7 +37,7 @@ import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStreamUtils;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
+import org.apache.flink.streaming.api.functions.sink.v2.DiscardingSink;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
@@ -200,7 +200,7 @@ public class ChangelogRescalingITCase extends TestLogger {
                                     Iterable<TestEvent> elements,
                                     Collector<String> out) {}
                         })
-                .addSink(new DiscardingSink<>());
+                .sinkTo(new DiscardingSink<>());
 
         return env.getStreamGraph().getJobGraph();
     }
@@ -329,7 +329,7 @@ public class ChangelogRescalingITCase extends TestLogger {
     private String checkpointAndCancel(JobID jobID) throws Exception {
         waitForCheckpoint(jobID, cluster.getMiniCluster(), 1);
         cluster.getClusterClient().cancel(jobID).get();
-        checkStatus(jobID);
+        waitForSuccessfulTermination(jobID);
         return CommonTestUtils.getLatestCompletedCheckpointPath(jobID, cluster.getMiniCluster())
                 .<NoSuchElementException>orElseThrow(
                         () -> {
@@ -337,7 +337,13 @@ public class ChangelogRescalingITCase extends TestLogger {
                         });
     }
 
-    private void checkStatus(JobID jobID) throws InterruptedException, ExecutionException {
+    private void waitForSuccessfulTermination(JobID jobID) throws Exception {
+        CommonTestUtils.waitUntilCondition(
+                () ->
+                        cluster.getClusterClient()
+                                .getJobStatus(jobID)
+                                .get()
+                                .isGloballyTerminalState());
         if (cluster.getClusterClient().getJobStatus(jobID).get().isGloballyTerminalState()) {
             cluster.getClusterClient()
                     .requestJobResult(jobID)

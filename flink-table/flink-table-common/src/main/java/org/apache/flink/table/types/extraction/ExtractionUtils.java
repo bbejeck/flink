@@ -613,6 +613,7 @@ public final class ExtractionUtils {
     // --------------------------------------------------------------------------------------------
 
     /** Result of the extraction in {@link #extractAssigningConstructor(Class, List)}. */
+    @Internal
     public static class AssigningConstructor {
         public final Constructor<?> constructor;
         public final List<String> parameterNames;
@@ -633,7 +634,7 @@ public final class ExtractionUtils {
         for (Constructor<?> constructor : clazz.getDeclaredConstructors()) {
             final boolean qualifyingConstructor =
                     Modifier.isPublic(constructor.getModifiers())
-                            && constructor.getParameterTypes().length == fields.size();
+                            && constructor.getParameterCount() == fields.size();
             if (!qualifyingConstructor) {
                 continue;
             }

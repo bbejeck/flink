@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.partition.consumer;
 
 import org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter;
+import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.io.network.ConnectionManager;
 import org.apache.flink.runtime.io.network.NettyShuffleEnvironment;
@@ -38,7 +39,7 @@ import static org.apache.flink.runtime.io.network.partition.consumer.SingleInput
 /** Builder for various {@link InputChannel} types. */
 public class InputChannelBuilder {
     public static final ConnectionID STUB_CONNECTION_ID =
-            new ConnectionID(new InetSocketAddress("localhost", 5000), 0);
+            new ConnectionID(ResourceID.generate(), new InetSocketAddress("localhost", 5000), 0);
 
     private int channelIndex = 0;
     private ResultPartitionID partitionId = new ResultPartitionID();
@@ -51,6 +52,7 @@ public class InputChannelBuilder {
     private ConnectionManager connectionManager = new TestingConnectionManager();
     private int initialBackoff = 0;
     private int maxBackoff = 0;
+    private int partitionRequestListenerTimeout = 0;
     private int networkBuffersPerChannel = 2;
     private InputChannelMetrics metrics =
             InputChannelTestUtils.newUnregisteredInputChannelMetrics();
@@ -99,6 +101,12 @@ public class InputChannelBuilder {
         return this;
     }
 
+    public InputChannelBuilder setPartitionRequestListenerTimeout(
+            int partitionRequestListenerTimeout) {
+        this.partitionRequestListenerTimeout = partitionRequestListenerTimeout;
+        return this;
+    }
+
     public InputChannelBuilder setNetworkBuffersPerChannel(int networkBuffersPerChannel) {
         this.networkBuffersPerChannel = networkBuffersPerChannel;
         return this;
@@ -135,6 +143,7 @@ public class InputChannelBuilder {
                         connectionManager,
                         initialBackoff,
                         maxBackoff,
+                        partitionRequestListenerTimeout,
                         networkBuffersPerChannel,
                         metrics);
         channel.setChannelStateWriter(stateWriter);
@@ -166,6 +175,7 @@ public class InputChannelBuilder {
                 connectionManager,
                 initialBackoff,
                 maxBackoff,
+                partitionRequestListenerTimeout,
                 networkBuffersPerChannel,
                 metrics.getNumBytesInRemoteCounter(),
                 metrics.getNumBuffersInRemoteCounter(),
@@ -200,6 +210,7 @@ public class InputChannelBuilder {
                         connectionManager,
                         initialBackoff,
                         maxBackoff,
+                        partitionRequestListenerTimeout,
                         networkBuffersPerChannel,
                         metrics);
         channel.setChannelStateWriter(stateWriter);

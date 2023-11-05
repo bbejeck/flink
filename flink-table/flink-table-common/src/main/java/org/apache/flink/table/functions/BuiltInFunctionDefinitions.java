@@ -33,6 +33,7 @@ import org.apache.flink.table.types.inference.ArgumentTypeStrategy;
 import org.apache.flink.table.types.inference.ConstantArgumentCount;
 import org.apache.flink.table.types.inference.InputTypeStrategies;
 import org.apache.flink.table.types.inference.TypeStrategies;
+import org.apache.flink.table.types.inference.strategies.ArrayOfStringArgumentTypeStrategy;
 import org.apache.flink.table.types.inference.strategies.SpecificInputTypeStrategies;
 import org.apache.flink.table.types.inference.strategies.SpecificTypeStrategies;
 import org.apache.flink.table.types.logical.LogicalType;
@@ -45,6 +46,7 @@ import org.apache.flink.util.Preconditions;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,6 +70,9 @@ import static org.apache.flink.table.types.inference.InputTypeStrategies.NO_ARGS
 import static org.apache.flink.table.types.inference.InputTypeStrategies.OUTPUT_IF_NULL;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.TYPE_LITERAL;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.and;
+import static org.apache.flink.table.types.inference.InputTypeStrategies.arrayFullyComparableElementType;
+import static org.apache.flink.table.types.inference.InputTypeStrategies.commonArrayType;
+import static org.apache.flink.table.types.inference.InputTypeStrategies.commonMultipleArrayType;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.commonType;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.comparable;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.compositeSequence;
@@ -129,6 +134,60 @@ public final class BuiltInFunctionDefinitions {
                     .runtimeClass("org.apache.flink.table.runtime.functions.scalar.IfNullFunction")
                     .build();
 
+    public static final BuiltInFunctionDefinition MAP_KEYS =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("MAP_KEYS")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    new String[] {"input"},
+                                    new ArgumentTypeStrategy[] {logical(LogicalTypeRoot.MAP)}))
+                    .outputTypeStrategy(nullableIfArgs(SpecificTypeStrategies.MAP_KEYS))
+                    .runtimeClass("org.apache.flink.table.runtime.functions.scalar.MapKeysFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition MAP_VALUES =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("MAP_VALUES")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    new String[] {"input"},
+                                    new ArgumentTypeStrategy[] {logical(LogicalTypeRoot.MAP)}))
+                    .outputTypeStrategy(nullableIfArgs(SpecificTypeStrategies.MAP_VALUES))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.MapValuesFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition MAP_ENTRIES =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("MAP_ENTRIES")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    new String[] {"input"},
+                                    new ArgumentTypeStrategy[] {logical(LogicalTypeRoot.MAP)}))
+                    .outputTypeStrategy(nullableIfArgs(SpecificTypeStrategies.MAP_ENTRIES))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.MapEntriesFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition MAP_FROM_ARRAYS =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("MAP_FROM_ARRAYS")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    new String[] {"keysArray", "valuesArray"},
+                                    new ArgumentTypeStrategy[] {
+                                        logical(LogicalTypeRoot.ARRAY),
+                                        logical(LogicalTypeRoot.ARRAY)
+                                    }))
+                    .outputTypeStrategy(nullableIfArgs(SpecificTypeStrategies.MAP_FROM_ARRAYS))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.MapFromArraysFunction")
+                    .build();
+
     public static final BuiltInFunctionDefinition SOURCE_WATERMARK =
             BuiltInFunctionDefinition.newBuilder()
                     .name("SOURCE_WATERMARK")
@@ -165,6 +224,126 @@ public final class BuiltInFunctionDefinitions {
                             "org.apache.flink.table.runtime.functions.scalar.ArrayContainsFunction")
                     .build();
 
+    public static final BuiltInFunctionDefinition ARRAY_DISTINCT =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_DISTINCT")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    Collections.singletonList("haystack"),
+                                    Collections.singletonList(logical(LogicalTypeRoot.ARRAY))))
+                    .outputTypeStrategy(nullableIfArgs(argument(0)))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayDistinctFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_POSITION =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_POSITION")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    Arrays.asList("haystack", "needle"),
+                                    Arrays.asList(
+                                            logical(LogicalTypeRoot.ARRAY), ARRAY_ELEMENT_ARG)))
+                    .outputTypeStrategy(nullableIfArgs(explicit(DataTypes.INT())))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayPositionFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_REMOVE =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_REMOVE")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    Arrays.asList("haystack", "needle"),
+                                    Arrays.asList(
+                                            logical(LogicalTypeRoot.ARRAY), ARRAY_ELEMENT_ARG)))
+                    .outputTypeStrategy(nullableIfArgs(ConstantArgumentCount.of(0), argument(0)))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayRemoveFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_REVERSE =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_REVERSE")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    Collections.singletonList("haystack"),
+                                    Collections.singletonList(logical(LogicalTypeRoot.ARRAY))))
+                    .outputTypeStrategy(nullableIfArgs(argument(0)))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayReverseFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_SLICE =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_SLICE")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            or(
+                                    sequence(
+                                            logical(LogicalTypeRoot.ARRAY),
+                                            logical(LogicalTypeRoot.INTEGER),
+                                            logical(LogicalTypeRoot.INTEGER)),
+                                    sequence(
+                                            logical(LogicalTypeRoot.ARRAY),
+                                            logical(LogicalTypeRoot.INTEGER))))
+                    .outputTypeStrategy(nullableIfArgs(argument(0)))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArraySliceFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_UNION =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_UNION")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(commonArrayType(2))
+                    .outputTypeStrategy(nullableIfArgs(COMMON))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayUnionFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_CONCAT =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_CONCAT")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(commonMultipleArrayType(1))
+                    .outputTypeStrategy(nullableIfArgs(COMMON))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayConcatFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_MAX =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_MAX")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(arrayFullyComparableElementType())
+                    .outputTypeStrategy(forceNullable(SpecificTypeStrategies.ARRAY_ELEMENT))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayMaxFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_JOIN =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_JOIN")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            or(
+                                    sequence(
+                                            new ArrayOfStringArgumentTypeStrategy(),
+                                            logical(LogicalTypeFamily.CHARACTER_STRING)),
+                                    sequence(
+                                            new ArrayOfStringArgumentTypeStrategy(),
+                                            logical(LogicalTypeFamily.CHARACTER_STRING),
+                                            logical(LogicalTypeFamily.CHARACTER_STRING))))
+                    .outputTypeStrategy(nullableIfArgs(explicit(DataTypes.STRING().nullable())))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayJoinFunction")
+                    .build();
+
     public static final BuiltInFunctionDefinition INTERNAL_REPLICATE_ROWS =
             BuiltInFunctionDefinition.newBuilder()
                     .name("$REPLICATE_ROWS$1")
@@ -179,7 +358,7 @@ public final class BuiltInFunctionDefinitions {
             BuiltInFunctionDefinition.newBuilder()
                     .name("$UNNEST_ROWS$1")
                     .kind(TABLE)
-                    .outputTypeStrategy(TypeStrategies.MISSING)
+                    .outputTypeStrategy(SpecificTypeStrategies.UNUSED)
                     .runtimeClass(
                             "org.apache.flink.table.runtime.functions.table.UnnestRowsFunction")
                     .internal()
@@ -1013,6 +1192,25 @@ public final class BuiltInFunctionDefinitions {
                     .runtimeProvided()
                     .build();
 
+    /**
+     * Special "+" operator used internally for implementing native hive SUM/AVG aggregations on a
+     * Decimal type. Here is used to prevent the normal {@link #PLUS} from overriding the special
+     * calculation for precision and scale needed by the aggregate function. {@link
+     * LogicalTypeMerging#findAdditionDecimalType} will add 1 to the precision of the plus result
+     * type, but for hive we just keep the precision as input type.
+     */
+    public static final BuiltInFunctionDefinition HIVE_AGG_DECIMAL_PLUS =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("HIVE_AGG_DECIMAL_PLUS")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(
+                            sequence(
+                                    logical(LogicalTypeRoot.DECIMAL),
+                                    logical(LogicalTypeRoot.DECIMAL)))
+                    .outputTypeStrategy(SpecificTypeStrategies.HIVE_AGG_DECIMAL_PLUS)
+                    .runtimeProvided()
+                    .build();
+
     /** Combines numeric subtraction and "datetime - interval" arithmetic. */
     public static final BuiltInFunctionDefinition MINUS =
             BuiltInFunctionDefinition.newBuilder()
@@ -1436,6 +1634,7 @@ public final class BuiltInFunctionDefinitions {
                     .name("currentDatabase")
                     .kind(SCALAR)
                     .outputTypeStrategy(explicit(STRING().notNull()))
+                    .notDeterministic()
                     .build();
 
     // --------------------------------------------------------------------------------------------
@@ -1464,9 +1663,23 @@ public final class BuiltInFunctionDefinitions {
                     .outputTypeStrategy(explicit(TIME().notNull()))
                     .build();
 
+    public static final BuiltInFunctionDefinition LOCAL_TIME =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("localTime")
+                    .kind(SCALAR)
+                    .outputTypeStrategy(explicit(TIME().notNull()))
+                    .build();
+
     public static final BuiltInFunctionDefinition CURRENT_TIMESTAMP =
             BuiltInFunctionDefinition.newBuilder()
                     .name("currentTimestamp")
+                    .kind(SCALAR)
+                    .outputTypeStrategy(explicit(TIMESTAMP_LTZ(3).notNull()))
+                    .build();
+
+    public static final BuiltInFunctionDefinition NOW =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("now")
                     .kind(SCALAR)
                     .outputTypeStrategy(explicit(TIMESTAMP_LTZ(3).notNull()))
                     .build();
@@ -1476,13 +1689,7 @@ public final class BuiltInFunctionDefinitions {
                     .name("currentRowTimestamp")
                     .kind(SCALAR)
                     .outputTypeStrategy(explicit(TIMESTAMP_LTZ(3).notNull()))
-                    .build();
-
-    public static final BuiltInFunctionDefinition LOCAL_TIME =
-            BuiltInFunctionDefinition.newBuilder()
-                    .name("localTime")
-                    .kind(SCALAR)
-                    .outputTypeStrategy(explicit(TIME().notNull()))
+                    .notDeterministic()
                     .build();
 
     public static final BuiltInFunctionDefinition LOCAL_TIMESTAMP =
@@ -2047,7 +2254,8 @@ public final class BuiltInFunctionDefinitions {
             BuiltInFunctionDefinition.newBuilder()
                     .name("reinterpretCast")
                     .kind(SCALAR)
-                    .outputTypeStrategy(TypeStrategies.MISSING)
+                    .inputTypeStrategy(SpecificInputTypeStrategies.REINTERPRET_CAST)
+                    .outputTypeStrategy(TypeStrategies.argument(1))
                     .build();
 
     public static final BuiltInFunctionDefinition AS =

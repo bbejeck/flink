@@ -62,6 +62,7 @@ public class MetricNames {
 
     public static final String CHECKPOINT_ALIGNMENT_TIME = "checkpointAlignmentTime";
     public static final String CHECKPOINT_START_DELAY_TIME = "checkpointStartDelayNanos";
+    public static final String INITIALIZATION_TIME = "initializationTime";
 
     public static final String START_WORKER_FAILURE_RATE = "startWorkFailure" + SUFFIX_RATE;
 
@@ -79,6 +80,7 @@ public class MetricNames {
             "softBackPressuredTimeMs" + SUFFIX_RATE;
     public static final String TASK_HARD_BACK_PRESSURED_TIME =
             "hardBackPressuredTimeMs" + SUFFIX_RATE;
+    public static final String CHANGELOG_BUSY_TIME = "changelogBusyTimeMs" + SUFFIX_RATE;
     public static final String TASK_MAX_SOFT_BACK_PRESSURED_TIME = "maxSoftBackPressureTimeMs";
     public static final String TASK_MAX_HARD_BACK_PRESSURED_TIME = "maxHardBackPressureTimeMs";
 
@@ -87,8 +89,7 @@ public class MetricNames {
     public static final String DEBLOATED_BUFFER_SIZE = "debloatedBufferSize";
 
     // FLIP-33 sink
-    // deprecated use NUM_RECORDS_SEND_ERRORS instead.
-    @Deprecated public static final String NUM_RECORDS_OUT_ERRORS = "numRecordsOutErrors";
+    public static final String NUM_RECORDS_OUT_ERRORS = "numRecordsOutErrors";
     public static final String NUM_RECORDS_SEND_ERRORS = "numRecordsSendErrors";
     public static final String CURRENT_SEND_TIME = "currentSendTime";
     public static final String NUM_RECORDS_SEND = "numRecordsSend";
@@ -123,4 +124,7 @@ public class MetricNames {
     public static final String LATEST_LOAD_TIME = "latestLoadTime";
     public static final String NUM_CACHED_RECORDS = "numCachedRecords";
     public static final String NUM_CACHED_BYTES = "numCachedBytes";
+
+    // FLIP-27 for split enumerator
+    public static final String UNASSIGNED_SPLITS = "unassignedSplits";
 }

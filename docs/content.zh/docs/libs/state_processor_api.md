@@ -161,7 +161,7 @@ public class StatefulFunctionWithTime extends KeyedProcessFunction<Integer, Inte
    ListState<Long> updateTimes;
 
    @Override
-   public void open(Configuration parameters) {
+   public void open(OpenContext openContext) {
       ValueStateDescriptor<Integer> stateDescriptor = new ValueStateDescriptor<>("state", Types.INT);
       state = getRuntimeContext().getState(stateDescriptor);
 
@@ -197,7 +197,7 @@ public class ReaderFunction extends KeyedStateReaderFunction<Integer, KeyedState
   ListState<Long> updateTimes;
 
   @Override
-  public void open(Configuration parameters) {
+  public void open(OpenContext openContext) {
     ValueStateDescriptor<Integer> stateDescriptor = new ValueStateDescriptor<>("state", Types.INT);
     state = getRuntimeContext().getState(stateDescriptor);
 
@@ -343,7 +343,7 @@ a savepoint for the Scala DataStream API please manually pass in all type inform
 int maxParallelism = 128;
 
 SavepointWriter
-    .newSavepoint(new HashMapStateBackend(), maxParallelism)
+    .newSavepoint(env, new HashMapStateBackend(), maxParallelism)
     .withOperator(OperatorIdentifier.forUid("uid1"), transformation1)
     .withOperator(OperatorIdentifier.forUid("uid2"), transformation2)
     .write(savepointPath);
@@ -430,7 +430,7 @@ public class AccountBootstrapper extends KeyedStateBootstrapFunction<Integer, Ac
     ValueState<Double> state;
 
     @Override
-    public void open(Configuration parameters) {
+    public void open(OpenContext openContext) {
         ValueStateDescriptor<Double> descriptor = new ValueStateDescriptor<>("total",Types.DOUBLE);
         state = getRuntimeContext().getState(descriptor);
     }
@@ -489,7 +489,7 @@ Besides creating a savepoint from scratch, you can base one off an existing save
 
 ```java
 SavepointWriter
-    .fromExistingSavepoint(oldPath, new HashMapStateBackend())
+    .fromExistingSavepoint(env, oldPath, new HashMapStateBackend())
     .withOperator(OperatorIdentifier.forUid("uid"), transformation)
     .write(newPath);
 ```

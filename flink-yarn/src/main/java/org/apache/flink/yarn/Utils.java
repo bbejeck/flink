@@ -23,7 +23,6 @@ import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.ConfigUtils;
 import org.apache.flink.runtime.clusterframework.BootstrapTools;
 import org.apache.flink.runtime.clusterframework.ContaineredTaskManagerParameters;
-import org.apache.flink.runtime.security.token.DelegationTokenConverter;
 import org.apache.flink.runtime.util.HadoopUtils;
 import org.apache.flink.util.StringUtils;
 import org.apache.flink.util.function.FunctionWithException;
@@ -35,7 +34,6 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DataOutputBuffer;
-import org.apache.hadoop.mapreduce.security.TokenCache;
 import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
@@ -43,22 +41,21 @@ import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.StringInterner;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.ApplicationConstants.Environment;
+import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.URL;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.util.Records;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -84,6 +81,9 @@ public final class Utils {
 
     /** Yarn site xml file name populated in YARN container for secure IT run. */
     public static final String YARN_SITE_FILE_NAME = "yarn-site.xml";
+
+    /** Constant representing a wildcard access control list. */
+    private static final String WILDCARD_ACL = "*";
 
     /** The prefixes that Flink adds to the YARN config. */
     private static final String[] FLINK_CONFIG_PREFIXES = {"flink.yarn."};
@@ -172,7 +172,7 @@ public final class Utils {
             LocalResourceVisibility resourceVisibility,
             LocalResourceType resourceType) {
         LocalResource localResource = Records.newRecord(LocalResource.class);
-        localResource.setResource(ConverterUtils.getYarnUrlFromURI(remoteRsrcPath.toUri()));
+        localResource.setResource(URL.fromURI(remoteRsrcPath.toUri()));
         localResource.setSize(resourceSize);
         localResource.setTimestamp(resourceModificationTime);
         localResource.setType(resourceType);
@@ -196,119 +196,6 @@ public final class Utils {
                 jarStat.getModificationTime(),
                 LocalResourceVisibility.APPLICATION,
                 resourceType);
-    }
-
-    public static void setTokensFor(
-            ContainerLaunchContext amContainer,
-            List<Path> paths,
-            Configuration conf,
-            boolean obtainingDelegationTokens)
-            throws IOException {
-        Credentials credentials = new Credentials();
-
-        if (obtainingDelegationTokens) {
-            LOG.info("Obtaining delegation tokens for HDFS and HBase.");
-            // for HDFS
-            TokenCache.obtainTokensForNamenodes(credentials, paths.toArray(new Path[0]), conf);
-            // for HBase
-            obtainTokenForHBase(credentials, conf);
-        } else {
-            LOG.info("Delegation token retrieval for HDFS and HBase is disabled.");
-        }
-
-        // for user
-        UserGroupInformation currUsr = UserGroupInformation.getCurrentUser();
-
-        Collection<Token<? extends TokenIdentifier>> usrTok = currUsr.getTokens();
-        for (Token<? extends TokenIdentifier> token : usrTok) {
-            LOG.info("Adding user token " + token.getService() + " with " + token);
-            credentials.addToken(token.getService(), token);
-        }
-
-        ByteBuffer tokens = ByteBuffer.wrap(DelegationTokenConverter.serialize(credentials));
-        amContainer.setTokens(tokens);
-    }
-
-    /** Obtain Kerberos security token for HBase. */
-    private static void obtainTokenForHBase(Credentials credentials, Configuration conf)
-            throws IOException {
-        if (UserGroupInformation.isSecurityEnabled()) {
-            LOG.info("Attempting to obtain Kerberos security token for HBase");
-            try {
-                // ----
-                // Intended call: HBaseConfiguration.addHbaseResources(conf);
-                Class.forName("org.apache.hadoop.hbase.HBaseConfiguration")
-                        .getMethod("addHbaseResources", Configuration.class)
-                        .invoke(null, conf);
-                // ----
-
-                LOG.info("HBase security setting: {}", conf.get("hbase.security.authentication"));
-
-                if (!"kerberos".equals(conf.get("hbase.security.authentication"))) {
-                    LOG.info("HBase has not been configured to use Kerberos.");
-                    return;
-                }
-
-                Token<?> token;
-                try {
-                    LOG.info("Obtaining Kerberos security token for HBase");
-                    // ----
-                    // Intended call: Token<AuthenticationTokenIdentifier> token =
-                    // TokenUtil.obtainToken(conf);
-                    token =
-                            (Token<?>)
-                                    Class.forName(
-                                                    "org.apache.hadoop.hbase.security.token.TokenUtil")
-                                            .getMethod("obtainToken", Configuration.class)
-                                            .invoke(null, conf);
-                    // ----
-                } catch (NoSuchMethodException e) {
-                    // for HBase 2
-
-                    // ----
-                    // Intended call: ConnectionFactory connectionFactory =
-                    // ConnectionFactory.createConnection(conf);
-                    Closeable connectionFactory =
-                            (Closeable)
-                                    Class.forName(
-                                                    "org.apache.hadoop.hbase.client.ConnectionFactory")
-                                            .getMethod("createConnection", Configuration.class)
-                                            .invoke(null, conf);
-                    // ----
-                    Class<?> connectionClass =
-                            Class.forName("org.apache.hadoop.hbase.client.Connection");
-                    // ----
-                    // Intended call: Token<AuthenticationTokenIdentifier> token =
-                    // TokenUtil.obtainToken(connectionFactory);
-                    token =
-                            (Token<?>)
-                                    Class.forName(
-                                                    "org.apache.hadoop.hbase.security.token.TokenUtil")
-                                            .getMethod("obtainToken", connectionClass)
-                                            .invoke(null, connectionFactory);
-                    // ----
-                    if (null != connectionFactory) {
-                        connectionFactory.close();
-                    }
-                }
-
-                if (token == null) {
-                    LOG.error("No Kerberos security token for HBase available");
-                    return;
-                }
-
-                credentials.addToken(token.getService(), token);
-                LOG.info("Added HBase Kerberos security token to credentials.");
-            } catch (ClassNotFoundException
-                    | NoSuchMethodException
-                    | IllegalAccessException
-                    | InvocationTargetException e) {
-                LOG.info(
-                        "HBase is not available (not packaged with this application): {} : \"{}\".",
-                        e.getClass().getSimpleName(),
-                        e.getMessage());
-            }
-        }
     }
 
     /**
@@ -542,6 +429,8 @@ public final class Utils {
 
         ctx.setEnvironment(containerEnv);
 
+        setAclsFor(ctx, flinkConfig);
+
         // For TaskManager YARN container context, read the tokens from the jobmanager yarn
         // container local file.
         // NOTE: must read the tokens from the local file, not from the UGI context, because if UGI
@@ -736,5 +625,54 @@ public final class Utils {
         }
 
         return yarnConfig;
+    }
+
+    /**
+     * Sets the application ACLs for the given ContainerLaunchContext based on the values specified
+     * in the given Flink configuration. Only ApplicationAccessType.VIEW_APP and
+     * ApplicationAccessType.MODIFY_APP ACLs are set, and only if they are configured in the Flink
+     * configuration. If the viewAcls or modifyAcls string contains the WILDCARD_ACL constant, it
+     * will replace the entire string with the WILDCARD_ACL. The resulting map is then set as the
+     * application acls for the given container launch context.
+     *
+     * @param amContainer the ContainerLaunchContext to set the ACLs for.
+     * @param flinkConfig the Flink configuration to read the ACL values from.
+     */
+    public static void setAclsFor(
+            ContainerLaunchContext amContainer,
+            org.apache.flink.configuration.Configuration flinkConfig) {
+        Map<ApplicationAccessType, String> acls = new HashMap<>();
+        final String viewAcls = flinkConfig.getString(YarnConfigOptions.APPLICATION_VIEW_ACLS);
+        final String modifyAcls = flinkConfig.getString(YarnConfigOptions.APPLICATION_MODIFY_ACLS);
+        validateAclString(viewAcls);
+        validateAclString(modifyAcls);
+
+        if (viewAcls != null && !viewAcls.isEmpty()) {
+            acls.put(ApplicationAccessType.VIEW_APP, viewAcls);
+        }
+        if (modifyAcls != null && !modifyAcls.isEmpty()) {
+            acls.put(ApplicationAccessType.MODIFY_APP, modifyAcls);
+        }
+        if (!acls.isEmpty()) {
+            amContainer.setApplicationACLs(acls);
+        }
+    }
+
+    /* Validates the ACL string to ensure that it is either null or the wildcard ACL. */
+    private static void validateAclString(String acl) {
+        if (acl != null && acl.contains("*") && !acl.equals("*")) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Invalid wildcard ACL %s. The ACL wildcard does not support regex. The only valid wildcard ACL is '*'.",
+                            acl));
+        }
+    }
+
+    public static Path getPathFromLocalFile(File localFile) {
+        return new Path(localFile.toURI());
+    }
+
+    public static Path getPathFromLocalFilePathStr(String localPathStr) {
+        return getPathFromLocalFile(new File(localPathStr));
     }
 }

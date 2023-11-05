@@ -331,7 +331,7 @@ class MyMapper extends RichMapFunction[Long, Long] {
   @transient private var histogram: Histogram = _
 
   override def open(config: Configuration): Unit = {
-    com.codahale.metrics.Histogram dropwizardHistogram =
+    val dropwizardHistogram =
       new com.codahale.metrics.Histogram(new SlidingWindowReservoir(500))
         
     histogram = getRuntimeContext()
@@ -1297,7 +1297,7 @@ Note that for failed checkpoints, metrics are updated on a best efforts basis an
   </thead>
   <tbody>
     <tr>
-      <th rowspan="8"><strong>Job (only available on JobManager)</strong></th>
+      <th rowspan="10"><strong>Job (only available on JobManager)</strong></th>
       <td>lastCheckpointDuration</td>
       <td>The time it took to complete the last checkpoint (in milliseconds).</td>
       <td>Gauge</td>
@@ -1305,6 +1305,11 @@ Note that for failed checkpoints, metrics are updated on a best efforts basis an
     <tr>
       <td>lastCheckpointSize</td>
       <td>The checkpointed size of the last checkpoint (in bytes), this metric could be different from lastCheckpointFullSize if incremental checkpoint or changelog is enabled.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>lastCompletedCheckpointId</td>
+      <td>The identifier of the last completed checkpoint.</td>
       <td>Gauge</td>
     </tr>
     <tr>
@@ -1566,7 +1571,7 @@ Note that the metrics are only available via reporters.
       <td>Gauge</td>
     </tr>
     <tr>
-      <th rowspan="7"><strong>Task/Operator</strong></th>
+      <th rowspan="8"><strong>Task/Operator</strong></th>
       <td>startedMaterialization</td>
       <td>The number of started materializations.</td>
       <td>Counter</td>
@@ -1580,6 +1585,11 @@ Note that the metrics are only available via reporters.
       <td>failedMaterialization</td>
       <td>The number of failed materializations.</td>
       <td>Counter</td>
+    </tr>
+    <tr>
+      <td>lastDurationOfMaterialization</td>
+      <td>The duration of the last materialization (in milliseconds).</td>
+      <td>Gauge</td>
     </tr>
     <tr>
       <td>lastFullSizeOfMaterialization</td>
@@ -1622,7 +1632,7 @@ Note that the metrics are only available via reporters.
       <td>Histogram</td>
     </tr>
     <tr>
-      <th rowspan="23"><strong>Task</strong></th>
+      <th rowspan="24"><strong>Task</strong></th>
       <td>numBytesInLocal</td>
       <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{< ref "docs/ops/metrics" >}}#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Counter</td>
@@ -1723,6 +1733,11 @@ Note that the metrics are only available via reporters.
       <td>Gauge</td>
     </tr>
     <tr>
+      <td>changelogBusyTimeMsPerSecond</td>
+      <td>The time (in milliseconds) taken by the Changelog state backend to do IO operations, only positive when Changelog state backend is enabled. Please check 'dstl.dfs.upload.max-in-flight' for more information.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
       <td>mailboxMailsPerSecond</td>
       <td>The number of actions processed from the task's mailbox per second which includes all actions, e.g., checkpointing, timer, or cancellation actions.</td>
       <td>Meter</td>
@@ -1736,6 +1751,11 @@ Note that the metrics are only available via reporters.
       <td>mailboxQueueSize</td>
       <td>The number of actions in the task's mailbox that are waiting to be processed.</td>
       <td>Gauge</td>
+    </tr>
+   <tr>
+      <td>initializationTime</td>
+      <td>The time in milliseconds that one task spends on initialization, return 0 when the task is not in initialization/running status. Most of the initialization time is usually spent in restoring from the checkpoint.</td>
+      <td>Counter</td>
     </tr>
     <tr>
       <td rowspan="2"><strong>Task (only if buffer debloating is enabled and in non-source tasks)</strong></td>
@@ -2259,7 +2279,7 @@ Request metrics aggregated over a subset of all entities of the respective type:
   - `/jobs/metrics?jobs=D,E,F`
   - `/jobs/<jobid>/vertices/<vertexid>/subtasks/metrics?subtask=1,2,3`
 
-<span class="label label-danger">Warning</span> Metric names can contain special characters that you need to be escape when querying metrics.
+<span class="label label-danger">Warning</span> Metric names can contain special characters that you need to escape when querying metrics.
 For example, "`a_+_b`" would be escaped to "`a_%2B_b`".
 
 List of characters that should be escaped:

@@ -58,7 +58,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
   def testFirstRowOnProctime(): Unit = {
     val t = failingDataSource(TestData.tupleData3)
       .toTable(tEnv, 'a, 'b, 'c, 'proctime.proctime)
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
 
     val sql =
       """
@@ -88,7 +88,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
   @Test
   def testFirstRowOnBuiltinProctime(): Unit = {
     val t = failingDataSource(TestData.tupleData3).toTable(tEnv, 'a, 'b, 'c)
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
 
     val sql =
       """
@@ -119,7 +119,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
   def testLastRowOnProctime(): Unit = {
     val t = failingDataSource(TestData.tupleData3)
       .toTable(tEnv, 'a, 'b, 'c, 'proctime.proctime)
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
 
     val sql =
       """
@@ -149,7 +149,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
   @Test
   def testLastRowOnBuiltinProctime(): Unit = {
     val t = failingDataSource(TestData.tupleData3).toTable(tEnv, 'a, 'b, 'c)
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
 
     val sql =
       """
@@ -182,7 +182,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     createSinkTable("rowtime_sink")
 
     val sql =
@@ -198,7 +198,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getRawResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getRawResultsAsStrings("rowtime_sink")
 
     val expected = List(
       "+I(1,1,Hi,1970-01-01T00:00:00.001)",
@@ -221,7 +221,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     createSinkTable("rowtime_sink")
 
     val sql =
@@ -237,7 +237,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getRawResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getRawResultsAsStrings("rowtime_sink")
 
     val expected = List(
       "+I(1,1,Hi,1970-01-01T00:00:00.001)",
@@ -254,7 +254,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     tEnv.executeSql(s"""
                        |CREATE TABLE rowtime_sink (
                        |    cnt BIGINT
@@ -279,7 +279,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
     """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getResultsAsStrings("rowtime_sink")
     val expected = List("6")
     assertEquals(expected.sorted, rawResult.sorted)
   }
@@ -290,7 +290,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     createSinkTable("rowtime_sink")
 
     val sql =
@@ -306,7 +306,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getRawResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getRawResultsAsStrings("rowtime_sink")
 
     val expected = List(
       "+I(1,1,Hi,1970-01-01T00:00:00.001)",
@@ -333,7 +333,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     createSinkTable("rowtime_sink")
 
     val sql =
@@ -349,7 +349,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getRawResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getRawResultsAsStrings("rowtime_sink")
 
     val expected = List(
       "+I(1,1,Hi,1970-01-01T00:00:00.001)",
@@ -368,7 +368,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
       .fromCollection(rowtimeTestData)
       .assignTimestampsAndWatermarks(new RowtimeExtractor)
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime())
-    tEnv.registerTable("T", t)
+    tEnv.createTemporaryView("T", t)
     tEnv.executeSql(s"""
                        |CREATE TABLE rowtime_sink (
                        |    cnt BIGINT
@@ -393,7 +393,7 @@ class DeduplicateITCase(miniBatch: MiniBatchMode, mode: StateBackendMode)
     """.stripMargin
 
     tEnv.executeSql(sql).await()
-    val rawResult = TestValuesTableFactory.getResults("rowtime_sink")
+    val rawResult = TestValuesTableFactory.getResultsAsStrings("rowtime_sink")
     val expected = List("6")
     assertEquals(expected.sorted, rawResult.sorted)
   }
