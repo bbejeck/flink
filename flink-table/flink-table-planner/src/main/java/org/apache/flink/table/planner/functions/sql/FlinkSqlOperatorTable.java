@@ -35,6 +35,7 @@ import org.apache.calcite.sql.SqlMatchRecognize;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlPostfixOperator;
 import org.apache.calcite.sql.SqlPrefixOperator;
+import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.InferTypes;
@@ -940,7 +941,9 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
             new SqlFunction(
                     "RAND",
                     SqlKind.OTHER_FUNCTION,
-                    ReturnTypes.DOUBLE,
+                    ReturnTypes.cascade(
+                            ReturnTypes.explicit(SqlTypeName.DOUBLE),
+                            SqlTypeTransforms.TO_NULLABLE),
                     null,
                     OperandTypes.or(
                             new SqlSingleOperandTypeChecker[] {
@@ -958,7 +961,9 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
             new SqlFunction(
                     "RAND_INTEGER",
                     SqlKind.OTHER_FUNCTION,
-                    ReturnTypes.INTEGER,
+                    ReturnTypes.cascade(
+                            ReturnTypes.explicit(SqlTypeName.INTEGER),
+                            SqlTypeTransforms.TO_NULLABLE),
                     null,
                     OperandTypes.or(
                             new SqlSingleOperandTypeChecker[] {
@@ -1272,6 +1277,7 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
     public static final SqlFunction TUMBLE = new SqlTumbleTableFunction();
     public static final SqlFunction HOP = new SqlHopTableFunction();
     public static final SqlFunction CUMULATE = new SqlCumulateTableFunction();
+    public static final SqlFunction SESSION = new SqlSessionTableFunction();
 
     // Catalog Functions
     public static final SqlFunction CURRENT_DATABASE =
@@ -1281,4 +1287,9 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
                     .operandTypeChecker(OperandTypes.NILADIC)
                     .notDeterministic()
                     .build();
+
+    // DEFAULT FUNCTION
+    // The default operator is used to fill in missing parameters when using named parameter,
+    // which is used during code generation and not exposed to the user by default.
+    public static final SqlSpecialOperator DEFAULT = SqlStdOperatorTable.DEFAULT;
 }

@@ -40,9 +40,9 @@ import org.apache.flink.runtime.executiongraph.ExecutionVertex;
 import org.apache.flink.runtime.executiongraph.IOMetrics;
 import org.apache.flink.runtime.executiongraph.JobStatusListener;
 import org.apache.flink.runtime.executiongraph.SpeculativeExecutionVertex;
-import org.apache.flink.runtime.executiongraph.failover.flip1.FailoverStrategy;
-import org.apache.flink.runtime.executiongraph.failover.flip1.FailureHandlingResult;
-import org.apache.flink.runtime.executiongraph.failover.flip1.RestartBackoffTimeStrategy;
+import org.apache.flink.runtime.executiongraph.failover.FailoverStrategy;
+import org.apache.flink.runtime.executiongraph.failover.FailureHandlingResult;
+import org.apache.flink.runtime.executiongraph.failover.RestartBackoffTimeStrategy;
 import org.apache.flink.runtime.io.network.partition.PartitionException;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
@@ -162,7 +162,7 @@ public class SpeculativeScheduler extends AdaptiveBatchScheduler
                 forwardGroupsByJobVertexId);
 
         this.maxConcurrentExecutions =
-                jobMasterConfiguration.getInteger(
+                jobMasterConfiguration.get(
                         BatchExecutionOptions.SPECULATIVE_MAX_CONCURRENT_EXECUTIONS);
 
         this.blockSlowNodeDuration =

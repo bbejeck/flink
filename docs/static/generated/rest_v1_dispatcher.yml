@@ -491,8 +491,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/CheckpointingStatistics'
     post:
-      description: Triggers a checkpoint. This async operation would return a 'triggerid'
-        for further query identifier.
+      description: Triggers a checkpoint. The 'checkpointType' parameter does not
+        support 'INCREMENTAL' option for now. See FLINK-33723. This async operation
+        would return a 'triggerid' for further query identifier.
       operationId: triggerCheckpoint
       parameters:
       - name: jobid
@@ -2022,6 +2023,8 @@ components:
     ExceptionInfo:
       type: object
       properties:
+        endpoint:
+          type: string
         exceptionName:
           type: string
         failureLabels:
@@ -2058,6 +2061,8 @@ components:
     ExecutionExceptionInfo:
       type: object
       properties:
+        endpoint:
+          type: string
         exception:
           type: string
         location:
@@ -2593,6 +2598,8 @@ components:
         end-time:
           type: integer
           format: int64
+        endpoint:
+          type: string
         host:
           type: string
         metrics:
@@ -2782,6 +2789,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ExceptionInfo'
+        endpoint:
+          type: string
         exceptionName:
           type: string
         failureLabels:
@@ -2892,6 +2901,8 @@ components:
         attempt:
           type: integer
           format: int32
+        endpoint:
+          type: string
         host:
           type: string
         subtask:
@@ -2969,6 +2980,8 @@ components:
         end-time:
           type: integer
           format: int64
+        endpoint:
+          type: string
         host:
           type: string
         metrics:
@@ -2998,6 +3011,8 @@ components:
         duration:
           type: integer
           format: int64
+        endpoint:
+          type: string
         host:
           type: string
         subtask:

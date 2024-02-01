@@ -19,7 +19,6 @@ package org.apache.flink.runtime.scheduler.adaptive;
 
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.JobManagerOptions;
 import org.apache.flink.core.failure.FailureEnricher;
 import org.apache.flink.runtime.blob.BlobWriter;
 import org.apache.flink.runtime.blob.VoidBlobWriter;
@@ -28,8 +27,8 @@ import org.apache.flink.runtime.checkpoint.CheckpointsCleaner;
 import org.apache.flink.runtime.checkpoint.StandaloneCheckpointRecoveryFactory;
 import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutor;
 import org.apache.flink.runtime.executiongraph.JobStatusListener;
-import org.apache.flink.runtime.executiongraph.failover.flip1.NoRestartBackoffTimeStrategy;
-import org.apache.flink.runtime.executiongraph.failover.flip1.RestartBackoffTimeStrategy;
+import org.apache.flink.runtime.executiongraph.failover.NoRestartBackoffTimeStrategy;
+import org.apache.flink.runtime.executiongraph.failover.RestartBackoffTimeStrategy;
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.io.network.partition.NoOpJobMasterPartitionTracker;
 import org.apache.flink.runtime.jobgraph.JobGraph;
@@ -215,6 +214,7 @@ public class AdaptiveSchedulerBuilder {
                         partitionTracker);
 
         return new AdaptiveScheduler(
+                AdaptiveScheduler.Settings.of(jobMasterConfiguration),
                 jobGraph,
                 jobResourceRequirements,
                 jobMasterConfiguration,
@@ -227,8 +227,6 @@ public class AdaptiveSchedulerBuilder {
                 userCodeLoader,
                 checkpointsCleaner,
                 checkpointRecoveryFactory,
-                jobMasterConfiguration.get(JobManagerOptions.RESOURCE_WAIT_TIMEOUT),
-                jobMasterConfiguration.get(JobManagerOptions.RESOURCE_STABILIZATION_TIMEOUT),
                 jobManagerJobMetricGroup,
                 restartBackoffTimeStrategy,
                 initializationTimestamp,

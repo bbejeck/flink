@@ -38,7 +38,7 @@ import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
 import org.apache.flink.runtime.executiongraph.IOMetrics;
 import org.apache.flink.runtime.executiongraph.ResultPartitionBytes;
-import org.apache.flink.runtime.executiongraph.failover.flip1.TestRestartBackoffTimeStrategy;
+import org.apache.flink.runtime.executiongraph.failover.TestRestartBackoffTimeStrategy;
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.jobgraph.DistributionPattern;
@@ -54,7 +54,6 @@ import org.apache.flink.runtime.jobmaster.LogicalSlot;
 import org.apache.flink.runtime.jobmaster.TestingLogicalSlotBuilder;
 import org.apache.flink.runtime.jobmaster.slotpool.PhysicalSlotProvider;
 import org.apache.flink.runtime.messages.checkpoint.AcknowledgeCheckpoint;
-import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.scheduler.strategy.ExecutionVertexID;
 import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.StateBackend;
@@ -407,9 +406,7 @@ public class SchedulerTestingUtils {
             JobVertexID jobVertex, ExecutionGraph executionGraph) {
         try {
             executionGraph.initializeJobVertex(
-                    executionGraph.getJobVertex(jobVertex),
-                    System.currentTimeMillis(),
-                    UnregisteredMetricGroups.createUnregisteredJobManagerJobMetricGroup());
+                    executionGraph.getJobVertex(jobVertex), System.currentTimeMillis());
             executionGraph.notifyNewlyInitializedJobVertices(
                     Collections.singletonList(executionGraph.getJobVertex(jobVertex)));
         } catch (JobException exception) {

@@ -64,6 +64,13 @@ public class MetricNames {
     public static final String CHECKPOINT_START_DELAY_TIME = "checkpointStartDelayNanos";
     public static final String INITIALIZATION_TIME = "initializationTime";
 
+    public static final String MAILBOX_START_DURATION = "MailboxStartDurationMs";
+    public static final String READ_OUTPUT_DATA_DURATION = "ReadOutputDataDurationMs";
+    public static final String INITIALIZE_STATE_DURATION = "InitializeStateDurationMs";
+    public static final String GATE_RESTORE_DURATION = "GateRestoreDurationMs";
+    public static final String DOWNLOAD_STATE_DURATION = "DownloadStateDurationMs";
+    public static final String RESTORED_STATE_SIZE = "RestoredStateSizeBytes";
+
     public static final String START_WORKER_FAILURE_RATE = "startWorkFailure" + SUFFIX_RATE;
 
     public static String currentInputWatermarkName(int index) {
@@ -127,4 +134,12 @@ public class MetricNames {
 
     // FLIP-27 for split enumerator
     public static final String UNASSIGNED_SPLITS = "unassignedSplits";
+
+    // FLIP-371 for sink committer
+    public static final String TOTAL_COMMITTABLES = "totalCommittables";
+    public static final String SUCCESSFUL_COMMITTABLES = "successfulCommittables";
+    public static final String ALREADY_COMMITTED_COMMITTABLES = "alreadyCommittedCommittables";
+    public static final String FAILED_COMMITTABLES = "failedCommittables";
+    public static final String RETRIED_COMMITTABLES = "retriedCommittables";
+    public static final String PENDING_COMMITTABLES = "pendingCommittables";
 }

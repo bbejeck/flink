@@ -98,9 +98,9 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
                                                 String.format(
                                                         "Configuration option '%s' is not set.",
                                                         KubernetesConfigOptions.CLUSTER_ID.key())));
-        this.namespace = flinkConfig.getString(KubernetesConfigOptions.NAMESPACE);
+        this.namespace = flinkConfig.get(KubernetesConfigOptions.NAMESPACE);
         this.maxRetryAttempts =
-                flinkConfig.getInteger(
+                flinkConfig.get(
                         KubernetesConfigOptions.KUBERNETES_TRANSACTIONAL_OPERATION_MAX_RETRIES);
         this.nodePortAddressType =
                 flinkConfig.get(
@@ -342,15 +342,6 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     }
 
     @Override
-    public CompletableFuture<Void> deleteConfigMapsByLabels(Map<String, String> labels) {
-        // the only time, the delete method returns false is due to a 404 HTTP status which is
-        // returned if the underlying resource doesn't exist
-        return CompletableFuture.runAsync(
-                () -> this.internalClient.configMaps().withLabels(labels).delete(),
-                kubeClientExecutorService);
-    }
-
-    @Override
     public CompletableFuture<Void> deleteConfigMap(String configMapName) {
         // the only time, the delete method returns false is due to a 404 HTTP status which is
         // returned if the underlying resource doesn't exist
@@ -360,9 +351,9 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
     }
 
     @Override
-    public KubernetesConfigMapSharedWatcher createConfigMapSharedWatcher(
-            Map<String, String> labels) {
-        return new KubernetesConfigMapSharedInformer(this.internalClient, labels);
+    public KubernetesConfigMapSharedWatcher createConfigMapSharedWatcher(String name) {
+        LOG.info("Creating configmap shared watcher for {}.", name);
+        return new KubernetesConfigMapSharedInformer(this.internalClient, name);
     }
 
     @Override

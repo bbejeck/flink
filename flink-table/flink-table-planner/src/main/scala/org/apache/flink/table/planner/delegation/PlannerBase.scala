@@ -36,7 +36,6 @@ import org.apache.flink.table.planner.calcite._
 import org.apache.flink.table.planner.catalog.CatalogManagerCalciteSchema
 import org.apache.flink.table.planner.connectors.DynamicSinkUtils
 import org.apache.flink.table.planner.connectors.DynamicSinkUtils.validateSchemaAndApplyImplicitCast
-import org.apache.flink.table.planner.expressions.PlannerTypeInferenceUtilImpl
 import org.apache.flink.table.planner.hint.FlinkHints
 import org.apache.flink.table.planner.operations.PlannerQueryOperation
 import org.apache.flink.table.planner.plan.nodes.calcite.LogicalLegacySink
@@ -95,9 +94,6 @@ abstract class PlannerBase(
     isStreamingMode: Boolean,
     classLoader: ClassLoader)
   extends Planner {
-
-  // temporary utility until we don't use planner expressions anymore
-  functionCatalog.setPlannerTypeInferenceUtil(PlannerTypeInferenceUtilImpl.INSTANCE)
 
   private var parserFactory: ParserFactory = _
   private var parser: Parser = _
@@ -371,7 +367,8 @@ abstract class PlannerBase(
    * @return
    *   The [[Transformation]] DAG that corresponds to the node DAG.
    */
-  protected def translateToPlan(execGraph: ExecNodeGraph): util.List[Transformation[_]]
+  @VisibleForTesting
+  def translateToPlan(execGraph: ExecNodeGraph): util.List[Transformation[_]]
 
   def addExtraTransformation(transformation: Transformation[_]): Unit = {
     if (!extraTransformations.contains(transformation)) {
@@ -523,7 +520,9 @@ abstract class PlannerBase(
             val contextResolvedTable = catalogManager.getTableOrError(objectIdentifier)
             val modifyOperation = new SinkModifyOperation(
               contextResolvedTable,
-              new PlannerQueryOperation(modify.getInput)
+              new PlannerQueryOperation(
+                modify.getInput,
+                () => queryOperation.asSerializableString())
             )
             translateToRel(modifyOperation)
           case _ =>

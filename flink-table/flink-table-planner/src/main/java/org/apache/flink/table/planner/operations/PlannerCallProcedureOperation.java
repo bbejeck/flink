@@ -39,6 +39,7 @@ import org.apache.flink.table.data.conversion.RowRowConverter;
 import org.apache.flink.table.operations.CallProcedureOperation;
 import org.apache.flink.table.operations.Operation;
 import org.apache.flink.table.operations.OperationUtils;
+import org.apache.flink.table.planner.codegen.CodeGeneratorContext;
 import org.apache.flink.table.planner.functions.casting.RowDataToStringConverterImpl;
 import org.apache.flink.table.procedure.DefaultProcedureContext;
 import org.apache.flink.table.procedure.ProcedureContext;
@@ -130,7 +131,9 @@ public class PlannerCallProcedureOperation implements CallProcedureOperation {
         argumentVal[0] = new DefaultProcedureContext(env);
         for (int i = 0; i < internalInputArguments.length; i++) {
             argumentVal[i + 1] =
-                    toExternal(internalInputArguments[i], inputTypes[i], userClassLoader);
+                    (internalInputArguments[i] != null)
+                            ? toExternal(internalInputArguments[i], inputTypes[i], userClassLoader)
+                            : null;
         }
         return argumentVal;
     }
@@ -268,7 +271,8 @@ public class PlannerCallProcedureOperation implements CallProcedureOperation {
                         userClassLoader,
                         tableConfig
                                 .get(ExecutionConfigOptions.TABLE_EXEC_LEGACY_CAST_BEHAVIOUR)
-                                .isEnabled());
+                                .isEnabled(),
+                        new CodeGeneratorContext(tableConfig, userClassLoader));
         // create DataStructure converters
         DataStructureConverter<Object, Object> converter =
                 DataStructureConverters.getConverter(outputType);

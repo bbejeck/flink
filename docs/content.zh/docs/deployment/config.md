@@ -131,6 +131,10 @@ The default restart strategy will only take effect if no job specific restart st
 
 {{< generated/fixed_delay_restart_strategy_configuration >}}
 
+**Exponential Delay Restart Strategy**
+
+{{< generated/exponential_delay_restart_strategy_configuration >}}
+
 **Failure Rate Restart Strategy**
 
 {{< generated/failure_rate_restart_strategy_configuration >}}
@@ -283,6 +287,15 @@ Enabling RocksDB's native metrics may cause degraded performance and should be s
 ----
 ----
 
+# Traces
+
+Please refer to the [tracing system documentation]({{< ref "docs/ops/traces" >}}) for background on Flink's tracing infrastructure.
+
+{{< generated/trace_configuration >}}
+
+----
+----
+
 # History Server
 
 The history server keeps the information of completed jobs (graphs, runtimes, statistics). To enable it, you have to enable "job archiving" in the JobManager (`jobmanager.archive.fs.dir`).
@@ -305,6 +318,18 @@ See the [History Server Docs]({{< ref "docs/deployment/advanced/historyserver" >
 ----
 ----
 
+# Artifact Fetching
+
+Flink can fetch user artifacts stored locally, on remote DFS, or accessible via an HTTP(S) endpoint.
+{{< hint info >}}
+**Note:** This is only supported in Standalone Application Mode and Native Kubernetes Application Mode.
+{{< /hint >}}
+
+{{< generated/artifact_fetch_configuration >}}
+
+----
+----
+
 # Execution
 
 {{< generated/deployment_configuration >}}
@@ -314,7 +339,6 @@ See the [History Server Docs]({{< ref "docs/deployment/advanced/historyserver" >
 ### Pipeline
 
 {{< generated/pipeline_configuration >}}
-{{< generated/stream_pipeline_configuration >}}
 
 ### Checkpointing
 
@@ -358,8 +382,7 @@ Advanced options to tune RocksDB and RocksDB checkpoints.
 ### State Changelog Options
 
 Please refer to [State Backends]({{< ref "docs/ops/state/state_backends#enabling-changelog" >}}) for information on
-using State Changelog. {{< hint warning >}} The feature is in experimental status. {{< /hint >}} {{<
-generated/state_backend_changelog_section >}}
+using State Changelog.
 
 #### FileSystem-based Changelog options
 
