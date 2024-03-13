@@ -59,6 +59,7 @@ import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_CONTAINS;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_DISTINCT;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_ELEMENT;
+import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_EXCEPT;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_MAX;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_MIN;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.ARRAY_POSITION;
@@ -131,6 +132,7 @@ import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.LPAD;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.LTRIM;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MAP_ENTRIES;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MAP_KEYS;
+import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MAP_UNION;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MAP_VALUES;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MAX;
 import static org.apache.flink.table.functions.BuiltInFunctionDefinitions.MD5;
@@ -228,6 +230,19 @@ public abstract class BaseExpressions<InType, OutType> {
                                         Stream.of(toExpr(), ApiExpressionUtils.valueLiteral(name)),
                                         Stream.of(extraNames).map(ApiExpressionUtils::valueLiteral))
                                 .toArray(Expression[]::new)));
+    }
+
+    /**
+     * Returns an ARRAY that contains the elements from array1 that are not in array2. If no
+     * elements remain after excluding the elements in array2 from array1, the function returns an
+     * empty ARRAY.
+     *
+     * <p>If one or both arguments are NULL, the function returns NULL. The order of the elements
+     * from array1 is kept.
+     */
+    public OutType arrayExcept(InType array) {
+        return toApiSpecificExpression(
+                unresolvedCall(ARRAY_EXCEPT, toExpr(), objectToExpression(array)));
     }
 
     /**
@@ -1532,6 +1547,21 @@ public abstract class BaseExpressions<InType, OutType> {
     /** Returns an array of all entries in the given map. */
     public OutType mapEntries() {
         return toApiSpecificExpression(unresolvedCall(MAP_ENTRIES, toExpr()));
+    }
+
+    /**
+     * Returns a map created by merging at least one map. These maps should have a common map type.
+     * If there are overlapping keys, the value from 'map2' will overwrite the value from 'map1',
+     * the value from 'map3' will overwrite the value from 'map2', the value from 'mapn' will
+     * overwrite the value from 'map(n-1)'. If any of maps is null, return null.
+     */
+    public OutType mapUnion(InType... inputs) {
+        Expression[] args =
+                Stream.concat(
+                                Stream.of(toExpr()),
+                                Arrays.stream(inputs).map(ApiExpressionUtils::objectToExpression))
+                        .toArray(Expression[]::new);
+        return toApiSpecificExpression(unresolvedCall(MAP_UNION, args));
     }
 
     // Time definition

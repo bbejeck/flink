@@ -78,6 +78,7 @@ import static org.apache.flink.table.types.inference.InputTypeStrategies.OUTPUT_
 import static org.apache.flink.table.types.inference.InputTypeStrategies.TYPE_LITERAL;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.and;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.commonArrayType;
+import static org.apache.flink.table.types.inference.InputTypeStrategies.commonMapType;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.commonMultipleArrayType;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.commonType;
 import static org.apache.flink.table.types.inference.InputTypeStrategies.comparable;
@@ -165,6 +166,16 @@ public final class BuiltInFunctionDefinitions {
                     .outputTypeStrategy(nullableIfArgs(SpecificTypeStrategies.MAP_VALUES))
                     .runtimeClass(
                             "org.apache.flink.table.runtime.functions.scalar.MapValuesFunction")
+                    .build();
+
+    public static final BuiltInFunctionDefinition MAP_UNION =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("MAP_UNION")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(commonMapType(1))
+                    .outputTypeStrategy(COMMON)
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.MapUnionFunction")
                     .build();
 
     public static final BuiltInFunctionDefinition MAP_ENTRIES =
@@ -437,6 +448,16 @@ public final class BuiltInFunctionDefinitions {
                     .outputTypeStrategy(nullableIfArgs(explicit(DataTypes.INT().notNull())))
                     .runtimeProvided()
                     .internal()
+                    .build();
+
+    public static final BuiltInFunctionDefinition ARRAY_EXCEPT =
+            BuiltInFunctionDefinition.newBuilder()
+                    .name("ARRAY_EXCEPT")
+                    .kind(SCALAR)
+                    .inputTypeStrategy(commonArrayType(2))
+                    .outputTypeStrategy(nullableIfArgs(COMMON))
+                    .runtimeClass(
+                            "org.apache.flink.table.runtime.functions.scalar.ArrayExceptFunction")
                     .build();
 
     // --------------------------------------------------------------------------------------------

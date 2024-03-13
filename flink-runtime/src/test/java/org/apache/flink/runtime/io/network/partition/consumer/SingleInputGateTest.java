@@ -71,6 +71,7 @@ import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.shuffle.NettyShuffleDescriptor;
 import org.apache.flink.runtime.shuffle.UnknownShuffleDescriptor;
 import org.apache.flink.runtime.util.NettyShuffleDescriptorBuilder;
+import org.apache.flink.util.CompressedSerializedValue;
 
 import org.apache.flink.shaded.guava31.com.google.common.io.Closer;
 
@@ -170,7 +171,7 @@ class SingleInputGateTest extends InputGateTestBase {
 
             // after setup
             assertThat(inputGate.getBufferPool()).isNotNull();
-            assertThat(inputGate.getBufferPool().getNumberOfRequiredMemorySegments()).isEqualTo(1);
+            assertThat(inputGate.getBufferPool().getExpectedNumberOfMemorySegments()).isEqualTo(1);
             for (InputChannel inputChannel : inputGate.inputChannels()) {
                 if (inputChannel instanceof RemoteRecoveredInputChannel) {
                     assertThat(
@@ -187,7 +188,7 @@ class SingleInputGateTest extends InputGateTestBase {
 
             inputGate.convertRecoveredInputChannels();
             assertThat(inputGate.getBufferPool()).isNotNull();
-            assertThat(inputGate.getBufferPool().getNumberOfRequiredMemorySegments()).isEqualTo(1);
+            assertThat(inputGate.getBufferPool().getExpectedNumberOfMemorySegments()).isEqualTo(1);
             for (InputChannel inputChannel : inputGate.inputChannels()) {
                 if (inputChannel instanceof RemoteInputChannel) {
                     assertThat(((RemoteInputChannel) inputChannel).getNumberOfAvailableBuffers())
@@ -201,6 +202,7 @@ class SingleInputGateTest extends InputGateTestBase {
     void testPartitionRequestLogic() throws Exception {
         final NettyShuffleEnvironment environment = new NettyShuffleEnvironmentBuilder().build();
         final SingleInputGate gate = createInputGate(environment);
+        gate.setup();
 
         try (Closer closer = Closer.create()) {
             closer.register(environment::close);
@@ -218,7 +220,7 @@ class SingleInputGateTest extends InputGateTestBase {
             assertThat(remoteChannel).isInstanceOf(RemoteInputChannel.class);
             assertThat(((RemoteInputChannel) remoteChannel).getPartitionRequestClient())
                     .isNotNull();
-            assertThat(((RemoteInputChannel) remoteChannel).getInitialCredit()).isEqualTo(2);
+            assertThat(((RemoteInputChannel) remoteChannel).getNumExclusiveBuffers()).isEqualTo(2);
 
             final InputChannel localChannel = gate.getChannel(1);
             assertThat(localChannel).isInstanceOf(LocalInputChannel.class);
@@ -649,6 +651,7 @@ class SingleInputGateTest extends InputGateTestBase {
         SingleInputGate gate =
                 createSingleInputGate(partitionIds, ResultPartitionType.PIPELINED, netEnv);
         gate.setChannelStateWriter(ChannelStateWriter.NO_OP);
+        gate.setup();
 
         gate.finishReadRecoveredState();
         while (!gate.getStateConsumedFuture().isDone()) {
@@ -923,7 +926,13 @@ class SingleInputGateTest extends InputGateTestBase {
         // test setup
         gate.setup();
         assertThat(gate.getBufferPool()).isNotNull();
-        assertThat(gate.getBufferPool().getNumberOfRequiredMemorySegments()).isEqualTo(1);
+        assertThat(gate.getBufferPool().getExpectedNumberOfMemorySegments())
+                .isEqualTo(
+                        (gate.getNumberOfInputChannels()
+                                                - gate
+                                                        .unsynchronizedGetNumberOfLocalInputChannels())
+                                        * 2
+                                + 1);
 
         gate.finishReadRecoveredState();
         while (!gate.getStateConsumedFuture().isDone()) {
@@ -940,7 +949,8 @@ class SingleInputGateTest extends InputGateTestBase {
             if (inputChannel instanceof RemoteInputChannel) {
                 assertThat(((RemoteInputChannel) inputChannel).getPartitionRequestClient())
                         .isNotNull();
-                assertThat(((RemoteInputChannel) inputChannel).getInitialCredit()).isEqualTo(2);
+                assertThat(((RemoteInputChannel) inputChannel).getNumExclusiveBuffers())
+                        .isEqualTo(2);
             } else if (inputChannel instanceof LocalInputChannel) {
                 assertThat(((LocalInputChannel) inputChannel).getSubpartitionView()).isNotNull();
             }
@@ -1179,8 +1189,8 @@ class SingleInputGateTest extends InputGateTestBase {
     void testCalculateInputGateNetworkBuffers() throws Exception {
         verifyBuffersInBufferPool(true, 2);
         verifyBuffersInBufferPool(false, 2);
-        verifyBuffersInBufferPool(true, 500);
-        verifyBuffersInBufferPool(false, 500);
+        verifyBuffersInBufferPool(true, 100);
+        verifyBuffersInBufferPool(false, 100);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1220,24 +1230,25 @@ class SingleInputGateTest extends InputGateTestBase {
 
         for (InputChannel inputChannel : gate.inputChannels()) {
             if (inputChannel instanceof RemoteInputChannel) {
-                assertThat(((RemoteInputChannel) inputChannel).getInitialCredit()).isEqualTo(0);
+                assertThat(((RemoteInputChannel) inputChannel).getNumExclusiveBuffers())
+                        .isEqualTo(0);
             }
         }
 
-        int targetTotalBuffersPerGate = 2 * partitionIds.length * subpartitionRandSize + 8;
-        int requiredFloatingBuffersPerGate;
-        int totalFloatingBuffersPerGate;
-        if (targetTotalBuffersPerGate >= expectMaxRequiredBuffersPerGate.get()) {
-            requiredFloatingBuffersPerGate = expectMaxRequiredBuffersPerGate.get();
-            totalFloatingBuffersPerGate = targetTotalBuffersPerGate;
+        int numNonLocalInputChannels =
+                gate.getNumberOfInputChannels()
+                        - gate.unsynchronizedGetNumberOfLocalInputChannels();
+        int maxBuffersPerGate = 2 * numNonLocalInputChannels + 8;
+        int expectedBuffersPerGate;
+        if (maxBuffersPerGate >= expectMaxRequiredBuffersPerGate.get()) {
+            expectedBuffersPerGate = expectMaxRequiredBuffersPerGate.get();
         } else {
-            requiredFloatingBuffersPerGate = 1;
-            totalFloatingBuffersPerGate = 8;
+            expectedBuffersPerGate = 2 * numNonLocalInputChannels + 1;
         }
-        assertThat(gate.getBufferPool().getNumberOfRequiredMemorySegments())
-                .isEqualTo(requiredFloatingBuffersPerGate);
+        assertThat(gate.getBufferPool().getExpectedNumberOfMemorySegments())
+                .isEqualTo(expectedBuffersPerGate);
         assertThat(gate.getBufferPool().getMaxNumberOfMemorySegments())
-                .isEqualTo(totalFloatingBuffersPerGate);
+                .isEqualTo(maxBuffersPerGate);
     }
 
     private static List<InputChannel> getInputChannelsInPartition(
@@ -1312,8 +1323,9 @@ class SingleInputGateTest extends InputGateTestBase {
                         subpartitionIndexRange,
                         channelDescs.length,
                         Collections.singletonList(
-                                new TaskDeploymentDescriptor.NonOffloadedRaw<>(
-                                        new ShuffleDescriptorGroup(channelDescs))));
+                                new TaskDeploymentDescriptor.NonOffloaded<>(
+                                        CompressedSerializedValue.fromObject(
+                                                new ShuffleDescriptorGroup(channelDescs)))));
 
         final TaskMetricGroup taskMetricGroup =
                 UnregisteredMetricGroups.createUnregisteredTaskMetricGroup();

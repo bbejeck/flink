@@ -23,6 +23,7 @@ import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.operators.ProcessingTimeService.ProcessingTimeCallback;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.TaskManagerOptions;
+import org.apache.flink.core.execution.RestoreMode;
 import org.apache.flink.core.fs.AutoCloseableRegistry;
 import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.security.FlinkSecurityManager;
@@ -59,7 +60,6 @@ import org.apache.flink.runtime.io.network.partition.ChannelStateHolder;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
 import org.apache.flink.runtime.jobgraph.OperatorID;
-import org.apache.flink.runtime.jobgraph.RestoreMode;
 import org.apache.flink.runtime.jobgraph.tasks.CheckpointableTask;
 import org.apache.flink.runtime.jobgraph.tasks.CoordinatedTask;
 import org.apache.flink.runtime.jobgraph.tasks.TaskInvokable;
@@ -110,6 +110,7 @@ import org.apache.flink.util.FatalExitExceptionHandler;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.InstantiationUtil;
+import org.apache.flink.util.MdcUtils;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.SerializedValue;
 import org.apache.flink.util.clock.SystemClock;
@@ -416,8 +417,10 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             resourceCloser.registerCloseable(mailboxProcessor);
 
             this.channelIOExecutor =
-                    Executors.newSingleThreadExecutor(
-                            new ExecutorThreadFactory("channel-state-unspilling"));
+                    MdcUtils.scopeToJob(
+                            environment.getJobID(),
+                            Executors.newSingleThreadExecutor(
+                                    new ExecutorThreadFactory("channel-state-unspilling")));
             resourceCloser.registerCloseable(channelIOExecutor::shutdown);
 
             this.recordWriter = createRecordWriterDelegate(configuration, environment);
@@ -436,13 +439,16 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             // for simultaneous N ongoing concurrent checkpoints and for example clean up of one
             // aborted one.
             this.asyncOperationsThreadPool =
-                    new ThreadPoolExecutor(
-                            0,
-                            configuration.getMaxConcurrentCheckpoints() + 1,
-                            60L,
-                            TimeUnit.SECONDS,
-                            new LinkedBlockingQueue<>(),
-                            new ExecutorThreadFactory("AsyncOperations", uncaughtExceptionHandler));
+                    MdcUtils.scopeToJob(
+                            getEnvironment().getJobID(),
+                            new ThreadPoolExecutor(
+                                    0,
+                                    configuration.getMaxConcurrentCheckpoints() + 1,
+                                    60L,
+                                    TimeUnit.SECONDS,
+                                    new LinkedBlockingQueue<>(),
+                                    new ExecutorThreadFactory(
+                                            "AsyncOperations", uncaughtExceptionHandler)));
 
             // Register all asynchronous checkpoint threads.
             resourceCloser.registerCloseable(this::shutdownAsyncThreads);
@@ -1406,7 +1412,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                     String.format(
                             "Configured state backend (%s) does not support enforcing a full"
                                     + " snapshot. If you are restoring in %s mode, please"
-                                    + " consider choosing %s restore mode.",
+                                    + " consider choosing %s mode.",
                             stateBackend, RestoreMode.NO_CLAIM, RestoreMode.CLAIM));
         } else if (checkpointOptions.getCheckpointType().isSavepoint()) {
             SavepointType savepointType = (SavepointType) checkpointOptions.getCheckpointType();
