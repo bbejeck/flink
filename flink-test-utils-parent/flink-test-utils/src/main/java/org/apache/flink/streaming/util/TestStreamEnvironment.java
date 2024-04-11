@@ -19,6 +19,7 @@
 package org.apache.flink.streaming.util;
 
 import org.apache.flink.configuration.CheckpointingOptions;
+import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.configuration.ReadableConfig;
@@ -123,16 +124,27 @@ public class TestStreamEnvironment extends StreamExecutionEnvironment {
             randomize(conf, ExecutionOptions.SNAPSHOT_COMPRESSION, true, false);
         }
 
+        randomize(
+                conf,
+                // This config option is defined in the rocksdb module :(
+                ConfigOptions.key("state.backend.rocksdb.use-ingest-db-restore-mode")
+                        .booleanType()
+                        .noDefaultValue(),
+                true,
+                false);
+
         // randomize ITTests for enabling state change log
-        if (STATE_CHANGE_LOG_CONFIG.equalsIgnoreCase(STATE_CHANGE_LOG_CONFIG_ON)) {
-            if (!conf.contains(StateChangelogOptions.ENABLE_STATE_CHANGE_LOG)) {
+        if (!conf.contains(StateChangelogOptions.ENABLE_STATE_CHANGE_LOG)) {
+            if (STATE_CHANGE_LOG_CONFIG.equalsIgnoreCase(STATE_CHANGE_LOG_CONFIG_ON)) {
                 conf.set(StateChangelogOptions.ENABLE_STATE_CHANGE_LOG, true);
-                miniCluster.overrideRestoreModeForChangelogStateBackend();
+            } else if (STATE_CHANGE_LOG_CONFIG.equalsIgnoreCase(STATE_CHANGE_LOG_CONFIG_RAND)) {
+                randomize(conf, StateChangelogOptions.ENABLE_STATE_CHANGE_LOG, true, false);
             }
-        } else if (STATE_CHANGE_LOG_CONFIG.equalsIgnoreCase(STATE_CHANGE_LOG_CONFIG_RAND)) {
-            boolean enabled =
-                    randomize(conf, StateChangelogOptions.ENABLE_STATE_CHANGE_LOG, true, false);
-            if (enabled) {
+        }
+
+        // randomize periodic materialization when enabling state change log
+        if (conf.get(StateChangelogOptions.ENABLE_STATE_CHANGE_LOG)) {
+            if (!conf.contains(StateChangelogOptions.PERIODIC_MATERIALIZATION_ENABLED)) {
                 // More situations about enabling periodic materialization should be tested
                 randomize(
                         conf,
@@ -141,6 +153,8 @@ public class TestStreamEnvironment extends StreamExecutionEnvironment {
                         true,
                         true,
                         false);
+            }
+            if (!conf.contains(StateChangelogOptions.PERIODIC_MATERIALIZATION_INTERVAL)) {
                 randomize(
                         conf,
                         StateChangelogOptions.PERIODIC_MATERIALIZATION_INTERVAL,
@@ -148,8 +162,8 @@ public class TestStreamEnvironment extends StreamExecutionEnvironment {
                         Duration.ofMillis(500),
                         Duration.ofSeconds(1),
                         Duration.ofSeconds(5));
-                miniCluster.overrideRestoreModeForChangelogStateBackend();
             }
+            miniCluster.overrideRestoreModeForChangelogStateBackend();
         }
     }
 
